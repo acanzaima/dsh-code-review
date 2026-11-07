@@ -1,0 +1,30 @@
+# dsh-code-review
+
+> Review, stage and commit the uncommitted Git changes of the repository that
+> belongs to the current DSH conversation — with non-modal floating review
+> windows, side-by-side diffs, file and hunk operations, commit/push (including
+> in-panel remote setup), and optional AI-assisted grouping.
+
+A plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+(DSH) Web UI. It opens a non-modal floating review window per conversation, not a
+full Git client.
+
+## Docs
+
+- [README](README.md) — overview, installation and usage
+- [Architecture](docs/architecture.md) — how the host and client halves fit together
+- [Protocol](docs/protocol.md) — wire protocol and data shapes
+- [AI grouping](docs/ai-grouping.md) — model selection, data sent, failure behavior
+- [Development](docs/development.md) — build, test, validate and release
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+
+## Install
+
+```text
+DSH plugin manager → install_bundle → path to this package directory
+```
+
+The package has no runtime dependencies and ships a prebuilt `client.js`; no
+build step is required to install it.

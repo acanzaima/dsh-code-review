@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Code Review (dsh-code-review)",
+    "description": "Review the current repository's changes in non-modal floating windows: stage or unstage files and diff hunks, then commit and push without leaving the conversation."
+  }
+}

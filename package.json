@@ -1,0 +1,74 @@
+{
+  "name": "dsh-code-review",
+  "version": "0.1.0",
+  "description": "Review, stage and commit Git changes in non-modal floating review windows inside the DSH Web UI, with an optional AI-assisted change grouping.",
+  "type": "module",
+  "license": "MIT",
+  "author": "dsh-code-review contributors",
+  "main": "./index.js",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src/host/index.js",
+    "src/host/protocol.js",
+    "src/host/models.js",
+    "src/host/git.js",
+    "src/host/patch.js",
+    "src/host/ai.js",
+    "src/host/settings.js",
+    "cordis.patch.yml",
+    "locale/en.json",
+    "locale/zh.json",
+    "icon.svg",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs",
+    "validate": "node scripts/validate.mjs",
+    "check": "node scripts/validate.mjs --with-tests",
+    "pack:check": "node scripts/pack-check.mjs",
+    "release": "node scripts/release.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "git",
+    "review",
+    "diff",
+    "commit",
+    "push"
+  ]
+}

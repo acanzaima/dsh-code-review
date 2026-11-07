@@ -1,0 +1,76 @@
+name: Bug report
+description: Report behavior that does not match the documentation or should be fixed.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report. Please check
+        [docs/development.md](docs/development.md) and the known limitations in
+        the README first, in case the behavior is expected.
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: The DSH version shown in the app (Settings → About) or the package version you run.
+      placeholder: "0.2.1-rc.5"
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: dsh-code-review version
+      description: The installed plugin version (plugin manager or package.json).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, in order?
+      placeholder: |
+        1. Open a repository with uncommitted changes
+        2. Click the Code Review button
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error text, console output, or a screenshot if possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Repository size/kind, git version, whether AI grouping was enabled, etc.
+    validations:
+      required: false
