@@ -9746,7 +9746,17 @@ __def('app', function (exports, require, React) {
         return;
       }
       if (!open) return;
-      if (entries.length === 0) return;
+      if (entries.length === 0) {
+        /* Nothing left to classify (e.g. the user just committed everything).
+         * The previous result's signature can never match an empty change set,
+         * so keeping it would pin the "AI grouping is refreshing…" chip forever:
+         * this branch used to just return, leaving that stale notice on screen. */
+        var aiSettled = !aiState.result && !aiState.loading && !aiState.signature && !aiState.error && !aiState.notice;
+        if (aiSettled) return;
+        cancelAiRequest();
+        setAiState({ signature: null, result: null, pathGroups: null, loading: false, error: null, notice: null, model: null });
+        return;
+      }
       if (aiState.loading && aiRequestRef.current.id !== null) return;
       /* A failed request must not auto-retry: every retry spends model tokens and
        * the failure is already visible. Retry when the entries change or the user
@@ -10488,7 +10498,7 @@ __def('app', function (exports, require, React) {
     if (!open) return null;
 
     var aiNotice = null;
-    if (aiEnabled) {
+    if (aiEnabled && entries.length > 0) {
       if (aiState.loading) aiNotice = t('nav.aiLoading');
       else if (aiState.notice === 'fallback') {
         /* Surface the real failure code/reason: the generic "failed" text made

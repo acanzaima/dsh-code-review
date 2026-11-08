@@ -2729,6 +2729,52 @@ test('app keeps AI state path-based and preserves the grouping while a request l
   assert.match(appSource, /aiState\.result\.repo\.root !== repoRoot[\s\S]{0,400}?pathGroups: null/);
 });
 
+test('an empty change set clears the stale AI grouping state and notice', () => {
+  // User report: after committing everything with AI grouping on, the toolbar
+  // kept showing "changes updated, AI grouping is refreshing…" forever. The old
+  // classification signature can never match an empty change set, so the sync
+  // effect must cancel the request and drop the previous result instead of
+  // returning early (the notice was then computed from that stale result).
+  assert.equal(appSource.includes('if (entries.length === 0) return;'), false,
+    'the bare early return that pinned the stale notice must be gone');
+
+  const effectStart = appSource.indexOf('// Turning AI grouping off, or switching repository, drops any pending result.');
+  const effectEnd = appSource.indexOf(
+    '}, [aiEnabled, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);',
+    effectStart,
+  );
+  assert.ok(effectStart !== -1 && effectEnd > effectStart, 'the AI sync effect source is discoverable');
+  const effectBlock = appSource.slice(effectStart, effectEnd);
+
+  // The empty branch settles an already-settled state and otherwise clears
+  // every field of the classification state (result, signature, notice, busy).
+  const emptyStart = effectBlock.indexOf('if (entries.length === 0) {');
+  const emptyEnd = effectBlock.indexOf('if (aiState.loading &&', emptyStart);
+  assert.ok(emptyStart !== -1 && emptyEnd > emptyStart, 'the empty change-set branch is discoverable');
+  const emptyBranch = effectBlock.slice(emptyStart, emptyEnd);
+  assert.match(emptyBranch, /var aiSettled = !aiState\.result && !aiState\.loading && !aiState\.signature && !aiState\.error && !aiState\.notice;/);
+  assert.match(emptyBranch, /if \(aiSettled\) return;/);
+  assert.match(emptyBranch, /cancelAiRequest\(\);/);
+  assert.match(emptyBranch, /setAiState\(\{ signature: null, result: null, pathGroups: null, loading: false, error: null, notice: null, model: null \}\);/);
+  assert.equal(emptyBranch.includes('entries.length === 0) return;'), false);
+
+  // aiNotice only computes while entries exist: an empty repository can never
+  // render nav.aiLoading / nav.aiStale (or any other AI notice) again.
+  const noticeStart = appSource.indexOf('var aiNotice = null;');
+  const noticeEnd = appSource.indexOf('var topBar = h(components.TopBar, {', noticeStart);
+  assert.ok(noticeStart !== -1 && noticeEnd > noticeStart, 'the aiNotice computation is discoverable');
+  const noticeBlock = appSource.slice(noticeStart, noticeEnd);
+  const guardStart = noticeBlock.indexOf('if (aiEnabled && entries.length > 0) {');
+  assert.notEqual(guardStart, -1, 'aiNotice requires a non-empty change set');
+  assert.equal(noticeBlock.slice(0, guardStart).trim(), 'var aiNotice = null;',
+    'every AI notice source lives inside the entries.length > 0 guard');
+  const guardedNotices = noticeBlock.slice(guardStart);
+  for (const token of ["t('nav.aiLoading')", "t('ai.usedCache')", "t('nav.aiStale')", "t('nav.aiFailed')"]) {
+    assert.ok(guardedNotices.includes(token), `missing ${token} inside the guarded AI notice block`);
+  }
+  assert.match(appSource, /aiNotice: aiNotice,/);
+});
+
 /* ------------------------------------------------------------------------- */
 /* Diff refresh — a write keeps the previous content on screen (user report) */
 /* ------------------------------------------------------------------------- */
