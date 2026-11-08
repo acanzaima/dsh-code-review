@@ -28,6 +28,7 @@ import {
   readClassifyKeys,
   readExpectedMap,
   readFingerprint,
+  readGrouping,
   readKey,
   readKeyList,
   readRemoteConfig,
@@ -283,13 +284,18 @@ export function createHostPlugin(ctx) {
   const classifyCache = new Map();
   const classifyControllers = new Map();
 
-  function classifySignature(repo, entries, model, reasoningEffort) {
+  function classifySignature(repo, entries, model, reasoningEffort, grouping) {
     const hash = createHash('sha256');
     hash.update(repo.root);
     hash.update('\u0000');
     hash.update(model ?? '');
     hash.update('\u0000');
     hash.update(reasoningEffort ?? '');
+    hash.update('\u0000');
+    // The grouping mode selects a different prompt, so a warm role-mode result
+    // must never be served for a logic-mode request (and vice versa).
+    hash.update(grouping ?? 'role');
+    hash.update('\u0000');
     for (const entry of entries) {
       const fingerprint = entry.fingerprint !== null && typeof entry.fingerprint === 'object' ? entry.fingerprint : {};
       const gitlink = fingerprint.gitlink !== null && typeof fingerprint.gitlink === 'object' ? fingerprint.gitlink : {};
@@ -334,10 +340,11 @@ export function createHostPlugin(ctx) {
 
   /**
    * Run (or reuse) one classification for an already-resolved repository and
-   * prepared entries. The cache is keyed by repo + effective model + entry
-   * fingerprints, so a warm cache returns without another model call.
+   * prepared entries. The cache is keyed by repo + effective model + grouping
+   * mode + entry fingerprints, so a warm cache returns without another model
+   * call while switching modes always gets a fresh result.
    */
-  async function runClassification({ repo, entries, limitedOut, sessionId, requestId, force, current, controller }) {
+  async function runClassification({ repo, entries, limitedOut, sessionId, requestId, force, grouping, current, controller }) {
     // Explicit plugin choice → the model the requesting session runs on →
     // the DSH default model. Resolving the session route here keeps "use the
     // model of this conversation" true without another plugin-side setting.
@@ -350,7 +357,8 @@ export function createHostPlugin(ctx) {
     const reasoningEffort = typeof current.reasoningEffort === 'string' && current.reasoningEffort.length > 0
       ? current.reasoningEffort
       : undefined;
-    const signature = classifySignature(repo, entries, model, reasoningEffort);
+    const mode = grouping === 'logic' ? 'logic' : 'role';
+    const signature = classifySignature(repo, entries, model, reasoningEffort, mode);
     const cached = classifyCache.get(repo.root);
     if (force !== true && cached !== undefined && cached.signature === signature) {
       return { ...cached.result, cached: true };
@@ -363,9 +371,11 @@ export function createHostPlugin(ctx) {
       route: effectiveRoute === null ? undefined : effectiveRoute,
       customInstructions: typeof current.customInstructions === 'string' ? current.customInstructions : '',
       reasoningEffort,
+      grouping: mode,
     });
     const value = {
       requestId,
+      grouping: mode,
       categories: result.categories,
       source: 'ai',
       model: result.model,
@@ -387,6 +397,9 @@ export function createHostPlugin(ctx) {
   async function classify(params) {
     const current = await settings.read();
     if (current.aiClassify !== true) throw new ProtocolError('ai/disabled', 'AI classification is disabled in settings');
+    // An explicit per-request mode wins over the persisted plugin setting; the
+    // reader rejects unknown values so a stale client cannot pick a third mode.
+    const grouping = readGrouping(params) ?? (current.aiGrouping === 'logic' ? 'logic' : 'role');
     const opened = await openRepo(params);
     const repo = requireWritableRepo(opened);
     const keys = readClassifyKeys(params);
@@ -409,6 +422,7 @@ export function createHostPlugin(ctx) {
         sessionId: params.sessionId,
         requestId,
         force: params.force === true,
+        grouping,
         current,
         controller,
       });
@@ -482,6 +496,9 @@ export function createHostPlugin(ctx) {
             sessionId,
             requestId: `preclassify:${sessionId}`,
             force: false,
+            // Pre-classification always uses the persisted mode: it runs without
+            // a request, so there is no per-request override to apply.
+            grouping: current.aiGrouping === 'logic' ? 'logic' : 'role',
             current,
             controller,
           });
@@ -679,6 +696,11 @@ export function createHostPlugin(ctx) {
       if ('preclassify' in patch && typeof patch.preclassify !== 'boolean') {
         throw new ProtocolError('settings/invalid', 'preclassify must be a boolean');
       }
+      // The grouping mode drives which prompt is used; only the two documented
+      // modes are persisted (the default is 'role').
+      if ('aiGrouping' in patch && patch.aiGrouping !== 'role' && patch.aiGrouping !== 'logic') {
+        throw new ProtocolError('settings/invalid', 'aiGrouping must be "role" or "logic"');
+      }
       if ('maxCandidates' in patch && !Number.isFinite(patch.maxCandidates)) {
         throw new ProtocolError('settings/invalid', 'maxCandidates must be a number');
       }
@@ -724,11 +746,12 @@ export function createHostPlugin(ctx) {
       // Settings writes share the plugin's mutation chain: two panels saving at
       // once must not lose each other's patch through a read-modify-write race.
       const next = await serialise(() => settings.write(effectivePatch));
-      // Turning classification off, or changing the model / prompt / limit,
-      // invalidates cached results. Disabling AI grouping also drops queued
-      // pre-classifications; disabling pre-classification only drops the queue.
+      // Turning classification off, or changing the model / prompt / limit /
+      // grouping mode, invalidates cached results. Disabling AI grouping also
+      // drops queued pre-classifications; disabling pre-classification only
+      // drops the queue.
       if (patch.aiClassify === false || 'provider' in patch || 'model' in patch || 'customInstructions' in patch
-        || 'maxCandidates' in patch || 'reasoningEffort' in patch) {
+        || 'maxCandidates' in patch || 'reasoningEffort' in patch || 'aiGrouping' in patch) {
         classifyCache.clear();
       }
       if (patch.aiClassify === false || patch.preclassify === false) disposePreclassify();

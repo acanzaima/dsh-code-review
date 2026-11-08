@@ -147,8 +147,10 @@ __def('styles', function (exports) {
 /* One line on wide panels; when the panel gets narrow the action cluster wraps
  * onto a second row instead of squeezing the identity/summary or clipping the
  * actions. Height is auto (min 54px) so the toolbar grows rather than truncating
- * content. */
-.gr-topbar { container-type: inline-size; container-name: gr-topbar; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; align-content: center; column-gap: 12px; row-gap: 6px; height: auto; min-height: 54px; padding: 8px 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12.5px; overflow: hidden; }
+ * content. Overflow stays visible because the toolbar is a size container: its
+ * grouping selector anchors its listbox below the trigger (see
+ * .gr-combo-menu-anchor), and a clipped container would hide it. */
+.gr-topbar { container-type: inline-size; container-name: gr-topbar; position: relative; z-index: 5; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; align-content: center; column-gap: 12px; row-gap: 6px; height: auto; min-height: 54px; padding: 8px 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12.5px; overflow: visible; }
 .gr-topbar-repo { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 46%; }
 /* An empty identity slot (branch chip / tracking hidden) must not claim a flex
  * row or a gap on narrow panels. */
@@ -186,9 +188,15 @@ __def('styles', function (exports) {
 .gr-topbar-actions .gr-iconbtn, .gr-topbar-actions .gr-btn { flex: 0 0 auto; }
 .gr-topbar-actions .gr-iconbtn { width: 30px; height: 30px; }
 .gr-topbar-actions .gr-topbar-sep { margin: 0 4px; }
-.gr-topbar .gr-btn-ai { padding: 0 9px; color: var(--dsw-alias-label-secondary); }
-.gr-topbar .gr-btn-ai:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
-.gr-topbar .gr-btn-ai.gr-btn-toggled { color: var(--dsw-alias-brand-primary); }
+/* Grouping selector (Git status / AI role / AI logic): a compact DSH-menu
+ * trigger that fits the action row without pushing the push/settings controls
+ * out of the toolbar. The listbox is anchored inside the combo rather than
+ * viewport-fixed because the toolbar's size container would contain and clip a
+ * fixed-position descendant. */
+.gr-topbar .gr-topbar-grouping { width: auto; max-width: 200px; flex: 0 0 auto; }
+.gr-topbar .gr-topbar-grouping .gr-combo-trigger { width: auto; max-width: 200px; height: 28px; gap: 6px; padding: 0 8px; border-radius: var(--dsw-radius-sm, 6px); font-size: 12px; line-height: 16px; }
+.gr-topbar .gr-topbar-grouping .gr-combo-value { flex: 0 1 auto; }
+.gr-topbar .gr-topbar-grouping .gr-combo-chevron .gr-ico { width: 12px; height: 12px; }
 .gr-topbar-push { min-width: 64px; }
 /* AI grouping state rides after the change summary inside the shrinkable
  * toolbar middle. It is part of the summary row, so it never claims a row of
@@ -215,14 +223,13 @@ __def('styles', function (exports) {
   .gr-topbar .gr-tag { display: none; }
   .gr-topbar-actions { flex: 1 1 100%; justify-content: flex-end; margin-left: 0; }
   .gr-ai-row { max-width: 55%; }
-  .gr-topbar .gr-btn-ai .gr-btn-label { display: inline; }
-  .gr-topbar .gr-btn-ai { padding: 0 9px; }
 }
 @container gr-topbar (max-width: 700px) {
   .gr-topbar-repo .gr-tracking { display: none; }
   .gr-topbar-actions { gap: 2px; }
   .gr-topbar-actions .gr-topbar-sep { margin: 0 1px; }
   .gr-topbar-push { min-width: 0; padding: 0 8px; }
+  .gr-topbar .gr-topbar-grouping .gr-combo-trigger { padding: 0 7px; }
 }
 
 /* ---------- modal / dialogs ---------- */
@@ -535,6 +542,10 @@ __def('styles', function (exports) {
  * 14/360px width bounds, elevation-prominent shadow with a hairline stroke,
  * 34px items and a 14px label-primary check. */
 .gr-combo-menu { position: fixed; z-index: 1300; display: flex; flex-direction: column; box-sizing: border-box; min-width: 0; width: auto; max-width: min(360px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 24px)); overflow: auto; padding: 4px; border: 0; border-radius: var(--dsw-radius-lg, 10px); background: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-layer-2)); backdrop-filter: var(--dsw-menu-backdrop-filter, blur(12px)); box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3, 0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent))); --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); outline: none; font-size: 13px; color: var(--dsw-alias-label-primary); scrollbar-width: thin; }
+/* Anchored listbox: some triggers (the toolbar grouping selector) live inside a
+ * size container, which makes a viewport-fixed layer both contained and
+ * clipped. This placement hangs the menu off the trigger root instead. */
+.gr-combo-menu-anchor { position: absolute; top: calc(100% + 4px); right: 0; bottom: auto; min-width: max(100%, 168px); max-width: min(320px, calc(100vw - 16px)); }
 .gr-combo-option { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 6px 8px; border-radius: var(--dsw-radius-md, 8px); font-size: 13px; line-height: 20px; cursor: pointer; }
 .gr-combo-option-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gr-combo-option-active { background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-4, var(--dsw-alias-bg-layer-2))); }

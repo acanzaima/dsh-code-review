@@ -61,7 +61,7 @@ flowchart LR
 | `src/host/index.js` | Cordis 入口与组合根；方法表、方法分发、路由、仓库解析、写串行化、Git 操作接线、空闲预归类调度 | `apply(ctx)` 通过 `ctx.inject(['connection'])` 注册路由，并监听 `api-session/status` 在会话空闲时按需预热归类缓存；所有写方法经同一条 Promise 链串行化 |
 | `src/host/protocol.js` | 协议原语：错误类型、`{ ok, value }` / `{ ok, error }` 封套、JSON 响应，以及把不可信请求参数规范化为安全值 | 参数读取只接受协议允许的类型与范围，越界即抛协议错误 |
 | `src/host/models.js` | 模型目录与归类路由解析：列出 DSH 可用模型、计算 `effectiveModel` / `sessionModel` / `selectedModel` 标签 | 只缓存 provider/model 发现结果（60 秒），会话模型每次请求重新解析 |
-| `src/host/ai.js` | 归类能力：系统提示词、用户附加要求、输入负载裁剪、`llm.stream` 调用、回复解析与校验 | 模型只能返回输入中出现过的 id；未知 id 丢弃，未归类条目进入「其他变更」 |
+| `src/host/ai.js` | 归类能力：两种系统提示词（按职能 / 按功能逻辑）、用户附加要求、输入负载裁剪、`llm.stream` 调用、回复解析与校验 | 模型只能返回输入中出现过的 id；未知 id 丢弃，未归类条目进入「其他变更」；逻辑模式的保留分类名 `NON_FUNCTIONAL` 被标记为 `kind: "non-functional"` |
 | `src/host/git.js` | Git 调用引擎：仓库解析、状态、单文件 diff、文件/变更块级写操作、提交、推送预览与推送、远程配置 | 只经 Executor 以 argv 数组调用 `git`；写前用指纹校验；每个读写结果都来自新的 Git 调用；`setRemote` 只写本地配置、不访问网络 |
 | `src/host/patch.js` | 统一 diff 的解析与单 hunk patch 构造/匹配；未跟踪文件的合成补丁 | 解析与重建按原始字节进行，CRLF、缺失行尾等边界不丢失 |
 | `src/host/settings.js` | 插件私有设置的持久化：读取、合并、规范化，写入采用临时文件 + rename 原子替换 | 位于 `~/.dsh/code-review/settings.json`（可用 `DSH_HOME` 覆盖 DSH 主目录） |
@@ -88,7 +88,7 @@ flowchart LR
 
 ### 4.1 工具栏、文件导航与常驻状态栏
 
-- **`TopBar`**：左端的分支 chip 是按钮（`gr-branch-trigger`），点击展开菜单；菜单行由 `branchMenuItems(repo, t)` 从 `RepoRef` 的 `headSha` / `upstream` / `ahead` / `behind` / `branch` / `detached` 生成，复制动作通过 `app.js` 传入的 `onCopy` 写入剪贴板，成功后以 notice 回到状态栏；「设置远程仓库…」通过 `onSetRemote` 打开 `RemoteDialog`，保存时调用 `remoteSet`（本地 Git 配置写入，协议见 [protocol.md](./protocol.md)）。它**不提供分支切换**。中段是 `StatusPayload.summary` 派生的变更摘要（图标由 `statusGlyph` 渲染，保留颜色语义与文字标签），右端是分组与操作按钮（刷新 / 推送 / 设置 / 快捷键；AI 模式下另有「重新归类」，使用 `IconLayers` 图层图标，与刷新的 `IconRefresh` 区分）。分支 popover 与工具栏 `header` 是兄弟节点而不是子节点：`.gr-topbar` 是 `container-type: inline-size` 的尺寸容器，`position: fixed` 的后代会被它包含 / 裁剪，因此不能放在工具栏子树内。
+- **`TopBar`**：左端的分支 chip 是按钮（`gr-branch-trigger`），点击展开菜单；菜单行由 `branchMenuItems(repo, t)` 从 `RepoRef` 的 `headSha` / `upstream` / `ahead` / `behind` / `branch` / `detached` 生成，复制动作通过 `app.js` 传入的 `onCopy` 写入剪贴板，成功后以 notice 回到状态栏；「设置远程仓库…」通过 `onSetRemote` 打开 `RemoteDialog`，保存时调用 `remoteSet`（本地 Git 配置写入，协议见 [protocol.md](./protocol.md)）。它**不提供分支切换**。中段是 `StatusPayload.summary` 派生的变更摘要（图标由 `statusGlyph` 渲染，保留颜色语义与文字标签）。右端的第一个控件是**分组方式选择器**（`ui.Select`，三选一：Git 状态 / AI 归类 · 按职能 / AI 归类 · 按功能逻辑；价值 `git` / `role` / `logic`，菜单项带说明 tooltip 与当前项勾选，触发文案为当前模式），由 `onChangeGrouping` 写入 `{ aiClassify, aiGrouping }` 设置；选择器选中两个 AI 模式之一时右侧出现「重新归类」（`IconLayers` 图层图标，与刷新的 `IconRefresh` 区分）。选择器使用 `Select` 的 `anchorMenu` 模式把 listbox 绝对定位在触发根节点内，而不是 viewport-fixed：`.gr-topbar` 是 `container-type: inline-size` 的尺寸容器，fixed 后代会被它包含 / 裁剪。分支 popover 与工具栏 `header` 是兄弟节点而不是子节点，原因相同。
 - **`FileNav` 标题行三态全选**：作用域来自 `app.js` 传入的 `groups`（搜索过滤 / AI 分组之后的 `visibleGroups`；无搜索时覆盖全部条目），统计时排除 `conflict`；`allStaged` / `someStaged` 决定勾选与半选，无条目、`busy` 或 `selectAllDisabledReason`（Host 截断时为 `reason.truncated`）时禁用。点击调用 `onToggleAllStaged(entries, next)`，在 `app.js` 里复用 `toggleGroupStaged`：勾选只 `stage` 未暂存项、取消勾选只 `unstage` 已暂存项，仍走同一套指纹校验；**没有新增协议**。工具栏的批量暂存按钮已删除，批量能力只保留在这一处。标题行与文件行对齐：leading 固定 14px，trailing 用 `FileNav` 实测的滚动条 gutter（`--gr-files-scrollbar`，来自列表 `offsetWidth - clientWidth`）减去批量图标内缩，使最右侧图标的可见边缘落在文件行背景的右边缘上；列表保持 `scrollbar-gutter: stable`。
 - **`StatusBar`**：仓库状态可读（`status.state === 'ok'`）时始终渲染，忙碌 / 错误 / 通知期间同样显示。左侧依次是忙碌（`busy` + `operation`）、可关闭错误（`error`）、操作通知（`notice`）与「就绪」；就绪点的 tooltip 用 `StatusPayload.generatedAt` 格式化为本地时间。右侧摘要来自 `StatusPayload.repo` 与 `StatusPayload.summary`；宽度不足时由 `@container gr-statusbar` 先隐藏未跟踪 / 冲突，再收起整个摘要。原先单独的刷新错误条已并入这里（`refreshError` / `operationError` 作为 `error` 传入）。
 - 以上状态栏 / 摘要 / 文件导航数据仍来自既有的 `StatusPayload` / `RepoRef`（分支菜单里的「设置远程仓库…」是单独的 `remoteSet` 写方法，见 [protocol.md](./protocol.md) 第 4 节）；数据形状见 [protocol.md](./protocol.md) 第 5 节。
@@ -141,11 +141,11 @@ sequenceDiagram
 
 ### 5.3 AI 归类
 
-1. 客户端在开关打开、分组签名变化、切换仓库或用户点「重新归类」时调用 `classify`，只携带条目 key 与请求 id；条目元数据与摘录候选由 Host 从新读取的状态重建。分组签名是 `aiEntriesSignature`：由「变更路径 + 变更类型（+ 重命名旧路径）」排序后求哈希，**不包含 entry key / 状态 / 指纹**，因此勾选 / 取消勾选（暂存 / 取消暂存）不会改变签名、不会重新归类。
-2. Host 重新读取状态，按设置截断条目，生成项目线索与有限摘录，解析本次应使用的模型路由。
-3. Host 通过 DSH `llm.stream` 发起一次低温度请求，带 45 秒超时与可取消的 AbortSignal。
-4. 回复被解析为分类结构，并对照真实条目集合校验：未知 id 丢弃，未归类条目进入「其他变更」。
-5. 客户端把回复里的 entry key 经发送时记录的 key→path 表转换成路径分类（`aiPathGroups`），导航再按路径把当前条目映射进组（`aiGroups`）；同一文件在 staged / unstaged 之间切换后 key 变了、path 不变，因此仍留在原组，不会掉进「其他变更」。失败时回退为按 Git 状态分组。结果按「仓库 + 模型 + 条目指纹」缓存于 Host 内存。
+1. 客户端在 AI 模式下、分组签名变化、AI 模式变化、切换仓库或用户点「重新归类」时调用 `classify`，携带条目 key、本次 `grouping`（`role` / `logic`）与请求 id；条目元数据与摘录候选由 Host 从新读取的状态重建。分组签名是 `aiEntriesSignature`：由「变更路径 + 变更类型（+ 重命名旧路径）」排序后求哈希，**不包含 entry key / 状态 / 指纹**，因此勾选 / 取消勾选（暂存 / 取消暂存）不会改变签名、不会重新归类。
+2. Host 重新读取状态，按设置截断条目，生成项目线索与有限摘录，解析本次应使用的模型路由与有效模式（显式 `grouping` 优先，否则使用持久化的 `aiGrouping`）。
+3. Host 按模式选择系统提示词（按职能 / 按功能逻辑），通过 DSH `llm.stream` 发起一次低温度请求，带 45 秒超时与可取消的 AbortSignal；结果里的 `grouping` 回报本次模式。
+4. 回复被解析为分类结构，并对照真实条目集合校验：未知 id 丢弃，未归类条目进入「其他变更」；逻辑模式下名为 `NON_FUNCTIONAL` 的分类被标记为 `kind: "non-functional"`，客户端把它本地化为「非功能变更」并保留模型给的一句话说明作为 tooltip。
+5. 客户端把回复里的 entry key 经发送时记录的 key→path 表转换成路径分类（`aiPathGroups`），导航再按路径把当前条目映射进组（`aiGroups`）；同一文件在 staged / unstaged 之间切换后 key 变了、path 不变，因此仍留在原组，不会掉进「其他变更」。切换 AI 模式会取消进行中的请求并丢弃旧模式的回复，然后按新模式重新请求。失败时回退为按 Git 状态分组。结果按「仓库 + 模型 + 分组模式 + 条目指纹」缓存于 Host 内存。
 
 ## 6. 写安全不变量
 
@@ -210,5 +210,5 @@ sequenceDiagram
 - **窗口之间状态独立、设置共享**：每个窗口的 UI 状态（当前选中文件、diff 快照、窗口内对话框）互不影响；插件设置在所有窗口间共享。
 - **关窗始终手动**：切换会话 / 工作区、滚动或操作窗口后面的页面都不会自动关闭窗口，窗口只能通过标题栏的关闭按钮关闭。
 - **写链只约束本插件**：外部工具可在操作之间改动仓库，所以每次写都重新校验，而不是依赖队列。
-- **AI 默认关闭**：不开启时插件不会向模型发送任何数据；归类失败总是回退到 Git 状态分组。
+- **AI 默认关闭、两种视角同源**：默认按 Git 状态分组，不选择 AI 模式时插件不会向模型发送任何数据；「按职能」与「按功能逻辑」共用同一份有界输入和同一份缓存键（额外包含分组模式），功能逻辑分类不读取文件内容，因此仍属于导航辅助而不是代码理解；归类失败总是回退到 Git 状态分组。
 - **验证方式**：协议、Git 引擎与打包行为有自动化测试覆盖；窗口的视觉与交互在真实 DSH Web GUI 中人工验证。当前验证环境为 Windows + Git for Windows，其他平台未单独验证。

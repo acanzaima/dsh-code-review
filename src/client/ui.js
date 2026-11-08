@@ -273,12 +273,17 @@ __def('ui', function (exports, require, React) {
 
   /**
    * Contract props: { value, options: [{ value, label, title?, disabled? }],
-   * onChange(value), ariaLabel, disabled, placeholder, className }.
+   * onChange(value), ariaLabel, disabled, placeholder, className, anchorMenu }.
    *
    * A custom dropdown instead of a native <select>: the native popup and its
    * focus ring are rendered by the OS and can only look like a big black box,
    * which breaks the DSH settings look. This one is themed with tokens, has a
    * soft focus ring and a real listbox keyboard model.
+   *
+   * `anchorMenu` renders the listbox as an absolutely positioned child of the
+   * trigger root instead of a viewport-fixed layer. Use it for triggers inside a
+   * size container (`.gr-topbar`): layout containment would contain — and the
+   * container's overflow could clip — a fixed-position descendant.
    */
   function Select(props) {
     var openState = React.useState(false);
@@ -295,6 +300,7 @@ __def('ui', function (exports, require, React) {
 
     var options = Array.isArray(props.options) ? props.options : [];
     var disabled = !!props.disabled;
+    var anchorMenu = !!props.anchorMenu;
     var selectedIndex = -1;
     var selectedOption = null;
     for (var index = 0; index < options.length; index += 1) {
@@ -309,6 +315,9 @@ __def('ui', function (exports, require, React) {
     useLayoutEffect(function () {
       if (!open) return undefined;
       function measure() {
+        /* Anchored menus are positioned by their CSS class and the trigger
+         * root, so they never need viewport measurement. */
+        if (anchorMenu) return;
         var node = rootRef.current;
         if (!node) return;
         var rect = node.getBoundingClientRect();
@@ -346,7 +355,7 @@ __def('ui', function (exports, require, React) {
         window.removeEventListener('scroll', onReposition, true);
         window.removeEventListener('resize', onReposition);
       };
-    }, [open]);
+    }, [open, anchorMenu]);
 
     React.useEffect(function () {
       if (!open) return;
@@ -421,20 +430,22 @@ __def('ui', function (exports, require, React) {
       }
     }
 
-    var menu = open && position !== null
+    var menu = open && (anchorMenu || position !== null)
       ? h('div', {
-        className: 'gr-combo-menu',
+        className: cx('gr-combo-menu', anchorMenu && 'gr-combo-menu-anchor'),
         role: 'listbox',
         tabIndex: -1,
         ref: menuRef,
         'aria-label': props.ariaLabel || undefined,
-        style: {
-          top: position.top === undefined ? undefined : position.top + 'px',
-          bottom: position.bottom === undefined ? undefined : position.bottom + 'px',
-          right: position.right + 'px',
-          minWidth: position.minWidth + 'px',
-          maxHeight: position.maxHeight + 'px',
-        },
+        style: anchorMenu
+          ? undefined
+          : {
+            top: position.top === undefined ? undefined : position.top + 'px',
+            bottom: position.bottom === undefined ? undefined : position.bottom + 'px',
+            right: position.right + 'px',
+            minWidth: position.minWidth + 'px',
+            maxHeight: position.maxHeight + 'px',
+          },
         onKeyDown: onMenuKeyDown,
       }, options.map(function (option, optionIndex) {
         return h('div', {

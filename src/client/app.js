@@ -285,11 +285,16 @@ __def('app', function (exports, require, React) {
         if (path) paths.push(String(path));
       }
       if (paths.length === 0) continue;
-      groups.push({
+      var pathGroup = {
         name: String(category.name || ''),
         description: category.description ? String(category.description) : '',
         paths: paths,
-      });
+      };
+      /* Logic mode marks the "nothing that changes runtime behaviour" bucket
+       * with a stable kind; the navigation localizes it instead of showing the
+       * machine name (`NON_FUNCTIONAL`). */
+      if (category.kind === 'non-functional') pathGroup.kind = 'non-functional';
+      groups.push(pathGroup);
     }
     return groups.length > 0 ? groups : null;
   }
@@ -382,6 +387,7 @@ __def('app', function (exports, require, React) {
   function pickSettingsValue(value) {
     var result = {
       aiClassify: value && value.aiClassify === true,
+      aiGrouping: value && value.aiGrouping === 'logic' ? 'logic' : 'role',
       preclassify: value && value.preclassify === true,
       maxCandidates: value && Number.isFinite(value.maxCandidates) ? value.maxCandidates : 50,
     };
@@ -403,6 +409,7 @@ __def('app', function (exports, require, React) {
       : (activeLocale === 'en' ? 'en' : 'zh');
     var settings = {
       aiClassify: value.aiClassify === true,
+      aiGrouping: value.aiGrouping === 'logic' ? 'logic' : 'role',
       preclassify: value.preclassify === true,
       maxCandidates: value.maxCandidates,
       locale: locale,
@@ -458,12 +465,13 @@ __def('app', function (exports, require, React) {
     if (!rpc) return Promise.resolve();
     state.settingsStore.set(function (current) {
       var nextValue = {};
-      var keys = ['aiClassify', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
+      var keys = ['aiClassify', 'aiGrouping', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
       for (var index = 0; index < keys.length; index += 1) {
         if (current.value && current.value[keys[index]] !== undefined) nextValue[keys[index]] = current.value[keys[index]];
       }
       if (patch) {
         if ('aiClassify' in patch) nextValue.aiClassify = patch.aiClassify === true;
+        if ('aiGrouping' in patch) nextValue.aiGrouping = patch.aiGrouping === 'logic' ? 'logic' : 'role';
         if ('preclassify' in patch) nextValue.preclassify = patch.preclassify === true;
         if ('maxCandidates' in patch) nextValue.maxCandidates = patch.maxCandidates;
         if ('provider' in patch) {
@@ -522,6 +530,18 @@ __def('app', function (exports, require, React) {
       }
       throw error;
     });
+  }
+
+  /**
+   * Settings patch for one grouping selector option. Git status only turns AI
+   * grouping off (the persisted AI mode survives); the two AI options turn it
+   * on and persist their mode, so the toolbar selection survives a restart and
+   * the classifier receives the same mode the navigation shows.
+   */
+  function groupingSettingsPatch(mode) {
+    if (mode === 'role') return { aiClassify: true, aiGrouping: 'role' };
+    if (mode === 'logic') return { aiClassify: true, aiGrouping: 'logic' };
+    return { aiClassify: false };
   }
 
   // ---------------------------------------------------------------------------
@@ -603,6 +623,9 @@ __def('app', function (exports, require, React) {
     var target = props.target || { sessionId: null, cwd: null, label: '' };
     var sessionId = target && target.sessionId ? target.sessionId : null;
     var aiEnabled = settingsSnapshot.value.aiClassify === true;
+    /* Persisted AI grouping mode; only meaningful while AI grouping is on. The
+     * classifier and the navigation must always agree on it. */
+    var aiGrouping = settingsSnapshot.value.aiGrouping === 'logic' ? 'logic' : 'role';
 
     var snapshotRef = useRef(null);
     snapshotRef.current = snapshot;
@@ -616,6 +639,10 @@ __def('app', function (exports, require, React) {
     var navScrollRef = useRef(null);
     var workspaceRef = useRef(null);
     var aiRequestRef = useRef({ id: null, signature: null, controller: null, timer: null });
+    /* Live mode for async replies: a classify response must be checked against
+     * the mode that is active now, not only the one captured when it started. */
+    var aiGroupingRef = useRef(aiGrouping);
+    aiGroupingRef.current = aiGrouping;
     var remoteStateRef = useRef(remoteState);
     remoteStateRef.current = remoteState;
     var tRef = useRef(t);
@@ -996,6 +1023,9 @@ __def('app', function (exports, require, React) {
           id: 'ai:' + String(category.name),
           label: String(category.name),
           description: category.description || '',
+          /* Forward the Host's category kind: FileNav localizes the
+           * non-functional bucket (`NON_FUNCTIONAL`) for logic grouping. */
+          kind: category.kind === 'non-functional' ? 'non-functional' : '',
           tone: 'ai',
           entries: list,
         });
@@ -1022,7 +1052,7 @@ __def('app', function (exports, require, React) {
           return String(entry.path).toLowerCase().indexOf(needle) !== -1 ||
             (entry.oldPath && String(entry.oldPath).toLowerCase().indexOf(needle) !== -1);
         });
-        if (list.length > 0) result.push({ id: group.id, label: group.label, tone: group.tone, entries: list, description: group.description });
+        if (list.length > 0) result.push({ id: group.id, label: group.label, tone: group.tone, entries: list, description: group.description, kind: group.kind });
       }
       return result;
     }, [groups, search]);
@@ -1148,6 +1178,9 @@ __def('app', function (exports, require, React) {
       cancelAiRequest();
       var generation = targetGenerationRef.current;
       var requestId = util.uid('classify');
+      /* Snapshot the mode: the reply is only valid for the mode it was
+       * requested in. The host applies the same explicit mode. */
+      var requestedGrouping = aiGroupingRef.current;
       var controller = new AbortController();
       /* Only entry keys are sent: the host re-reads every piece of metadata and
        * the excerpts from the real repository state. Keep the key→path table of
@@ -1165,12 +1198,21 @@ __def('app', function (exports, require, React) {
       setAiState(function (currentState) {
         return { signature: currentState.signature, result: currentState.result, pathGroups: currentState.pathGroups, loading: true, error: null, notice: null, model: currentState.model };
       });
-      var params = { requestId: requestId, entries: payloadEntries };
+      var params = { requestId: requestId, entries: payloadEntries, grouping: requestedGrouping };
       if (sessionId) params.sessionId = sessionId;
       if (force) params.force = true;
       rpc.call('classify', params, { signal: controller.signal }).then(function (value) {
         if (generation !== targetGenerationRef.current) return;
         if (aiRequestRef.current.id !== requestId || controller.signal.aborted) return;
+        /* A reply only describes the grouping mode it was requested for. When
+         * the user switched modes while it streamed, painting it would mix two
+         * different groupings on screen: drop it (the mode-change effect below
+         * already cancelled the request and reset the display). */
+        var activeGrouping = aiGroupingRef.current;
+        var responseGrouping = value && (value.grouping === 'role' || value.grouping === 'logic')
+          ? value.grouping
+          : requestedGrouping;
+        if (requestedGrouping !== activeGrouping || responseGrouping !== activeGrouping) return;
         var latest = snapshotRef.current;
         if (!latest || !latest.repo || latest.repo.root !== (value && value.repo ? value.repo.root : null)) {
           cancelAiRequest();
@@ -1218,6 +1260,26 @@ __def('app', function (exports, require, React) {
       });
     }, [cancelAiRequest, entriesSignature, sessionId]);
 
+    /* Role and logic grouping produce different categories, so switching the
+     * mode invalidates everything the previous mode produced: cancel the
+     * in-flight request and drop the rendered result / notice instead of
+     * painting categories from two modes. The auto-request effect below re-runs
+     * (its deps include aiGrouping) and debounces a fresh request with the new
+     * mode. */
+    var previousGroupingRef = useRef(aiGrouping);
+    useEffect(function () {
+      if (!aiEnabled) {
+        /* The persisted mode may change while AI grouping is off; remember it
+         * so enabling AI with that mode does not look like a mode switch. */
+        previousGroupingRef.current = aiGrouping;
+        return;
+      }
+      if (previousGroupingRef.current === aiGrouping) return;
+      previousGroupingRef.current = aiGrouping;
+      cancelAiRequest();
+      setAiState({ signature: null, result: null, pathGroups: null, loading: false, error: null, notice: null, model: null });
+    }, [aiEnabled, aiGrouping, cancelAiRequest]);
+
     // Turning AI grouping off, or switching repository, drops any pending result.
     useEffect(function () {
       if (!aiEnabled) {
@@ -1260,7 +1322,7 @@ __def('app', function (exports, require, React) {
         }
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [aiEnabled, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);
+    }, [aiEnabled, aiGrouping, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);
 
     useEffect(function () {
       return function () {
@@ -2015,18 +2077,13 @@ __def('app', function (exports, require, React) {
       onOpenPush: openPush,
       pushDisabledReason: pushDisabledReason,
       aiMode: aiEnabled,
+      aiGrouping: aiGrouping,
       aiBusy: aiState.loading,
       aiNotice: aiNotice,
-      onToggleAiMode: function () {
-        saveSettings({ aiClassify: !aiEnabled }).catch(function () {});
+      onChangeGrouping: function (value) {
+        saveSettings(groupingSettingsPatch(value)).catch(function () {});
       },
       onReclassify: function () {
-        if (!aiEnabled) {
-          saveSettings({ aiClassify: true }).then(function () {
-            requestAi({ force: true });
-          }).catch(function () {});
-          return;
-        }
         requestAi({ force: true });
       },
       onShowShortcuts: function () { setShortcutHelp(true); },
@@ -2715,6 +2772,7 @@ __def('app', function (exports, require, React) {
   exports.groupIdForEntry = groupIdForEntry;
   exports.aiEntriesSignature = aiEntriesSignature;
   exports.aiPathGroups = aiPathGroups;
+  exports.groupingSettingsPatch = groupingSettingsPatch;
   exports.clampWindowSize = clampWindowSize;
   exports.clampWindowRect = clampWindowRect;
   exports.dragWindowRect = dragWindowRect;

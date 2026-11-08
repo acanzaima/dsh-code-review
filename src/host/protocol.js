@@ -125,6 +125,22 @@ export function readClassifyKeys(params) {
   return keys;
 }
 
+/**
+ * Optional grouping mode for one classification request: 'role' (default) or
+ * 'logic'. Absent / null means "use the persisted plugin setting"; any other
+ * value is a protocol error so a stale or forged client cannot silently fall
+ * back to a different prompt.
+ * @returns {'role' | 'logic' | undefined}
+ */
+export function readGrouping(params) {
+  const value = params?.grouping;
+  if (value === undefined || value === null) return undefined;
+  if (value !== 'role' && value !== 'logic') {
+    throw new ProtocolError('ai/invalid', 'grouping must be "role" or "logic"', { reason: 'invalid-grouping' });
+  }
+  return value;
+}
+
 /** Optional remote name for push requests. */
 export function readRemoteName(params) {
   const value = params?.remote;

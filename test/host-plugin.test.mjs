@@ -12,6 +12,8 @@ import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { parseClassification } from '../src/host/ai.js';
+
 const run = promisify(execFile);
 
 let workspace;
@@ -672,6 +674,7 @@ describe('settings and AI grouping', () => {
     const initial = await plugin.dispatch('settingsGet', {});
     assert.equal(initial.ok, true);
     assert.equal(initial.value.aiClassify, false);
+    assert.equal(initial.value.aiGrouping, 'role', 'grouping defaults to the role mode');
     const updated = await plugin.dispatch('settingsSet', { patch: { aiClassify: true, maxCandidates: 50 } });
     assert.equal(updated.ok, true);
     assert.equal(updated.value.aiClassify, true);
@@ -679,6 +682,28 @@ describe('settings and AI grouping', () => {
     const stored = JSON.parse(await readFile(join(home, 'code-review', 'settings.json'), 'utf8'));
     assert.equal(stored.aiClassify, true);
     assert.equal(stored.maxCandidates, 50);
+    assert.equal(stored.aiGrouping, 'role');
+  });
+
+  test('aiGrouping persists, is validated and falls back to role', async () => {
+    try {
+      const updated = await plugin.dispatch('settingsSet', { patch: { aiGrouping: 'logic' } });
+      assert.equal(updated.ok, true);
+      assert.equal(updated.value.aiGrouping, 'logic');
+      assert.equal((await plugin.dispatch('settingsGet', {})).value.aiGrouping, 'logic');
+      const stored = JSON.parse(await readFile(join(home, 'code-review', 'settings.json'), 'utf8'));
+      assert.equal(stored.aiGrouping, 'logic');
+
+      for (const value of ['bogus', '', 1, null, true]) {
+        const rejected = await plugin.dispatch('settingsSet', { patch: { aiGrouping: value } });
+        assert.equal(rejected.ok, false, `accepted ${JSON.stringify(value)}`);
+        assert.equal(rejected.error.code, 'settings/invalid');
+      }
+      // The rejected writes must not have changed the persisted mode.
+      assert.equal((await plugin.dispatch('settingsGet', {})).value.aiGrouping, 'logic');
+    } finally {
+      await plugin.dispatch('settingsSet', { patch: { aiGrouping: 'role' } });
+    }
   });
 
   test('classify rejects invalid settings values', async () => {
@@ -1205,6 +1230,216 @@ describe('settings and AI grouping', () => {
     } finally {
       await brokenPlugin.dispatch('settingsSet', { patch: { aiClassify: false, preclassify: false } });
       brokenPlugin.disposePreclassify();
+    }
+  });
+
+  test('classify uses the persisted grouping mode and accepts an explicit override', async () => {
+    await plugin.dispatch('settingsSet', { patch: { aiClassify: true, provider: null, model: null, aiGrouping: 'logic' } });
+    try {
+      const status = (await plugin.dispatch('status', { cwd: repoDir })).value;
+      assert.ok(status.entries.length > 0, 'expected a non-empty change set');
+      const keys = status.entries.map((entry) => entry.key);
+      const entries = keys.map((key) => ({ key }));
+      llmReply = JSON.stringify({ categories: [{ name: '登录流程', description: '登录与鉴权', ids: keys }] });
+
+      llmRequest = null;
+      const logic = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-logic-mode', entries, force: true });
+      assert.equal(logic.ok, true, JSON.stringify(logic.error));
+      assert.equal(logic.value.grouping, 'logic');
+      // The mode picked the logic prompt: it demands the NON_FUNCTIONAL sentinel
+      // and groups by functional logic instead of by semantic role.
+      assert.match(llmRequest.system, /NON_FUNCTIONAL/);
+      assert.match(llmRequest.system, /功能逻辑/);
+      assert.doesNotMatch(llmRequest.system, /语义角色/);
+
+      // An explicit per-request mode wins over the persisted setting.
+      llmReply = JSON.stringify({ categories: [{ name: '全部', ids: keys }] });
+      const role = await plugin.dispatch('classify', {
+        cwd: repoDir,
+        requestId: 'req-explicit-role',
+        entries,
+        force: true,
+        grouping: 'role',
+      });
+      assert.equal(role.ok, true, JSON.stringify(role.error));
+      assert.equal(role.value.grouping, 'role');
+      assert.match(llmRequest.system, /语义角色/);
+      assert.doesNotMatch(llmRequest.system, /NON_FUNCTIONAL/);
+      // The override is per request only; the persisted setting is untouched.
+      assert.equal((await plugin.dispatch('settingsGet', {})).value.aiGrouping, 'logic');
+
+      // Unknown modes are rejected before any model call.
+      const callsBefore = llmCalls;
+      for (const grouping of ['bogus', 3, true, {}]) {
+        const invalid = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-invalid-mode', entries, grouping });
+        assert.equal(invalid.ok, false, `accepted ${JSON.stringify(grouping)}`);
+        assert.equal(invalid.error.code, 'ai/invalid');
+        assert.equal(invalid.error.details.reason, 'invalid-grouping');
+      }
+      assert.equal(llmCalls, callsBefore, 'an invalid grouping mode must not reach the model');
+    } finally {
+      await plugin.dispatch('settingsSet', { patch: { aiClassify: false, provider: null, model: null, aiGrouping: 'role' } });
+    }
+  });
+
+  test('logic mode maps the NON_FUNCTIONAL sentinel and keeps the fallback', async () => {
+    await plugin.dispatch('settingsSet', { patch: { aiClassify: true, provider: null, model: null, aiGrouping: 'logic' } });
+    try {
+      // Keep this self-contained: the test needs a change set large enough for
+      // one classified group, the sentinel category and an unclassified residue.
+      for (const name of ['group-a.txt', 'group-b.txt', 'group-c.txt', 'group-d.txt', 'group-e.txt']) {
+        await writeFile(join(repoDir, name), `${name}\n`, 'utf8');
+      }
+      const status = (await plugin.dispatch('status', { cwd: repoDir })).value;
+      const keys = status.entries.map((entry) => entry.key);
+      assert.ok(keys.length >= 4, 'expected a change set with an unclassified residue');
+      const entries = keys.map((key) => ({ key }));
+      const functional = [keys[0]];
+      const config = [keys[1]];
+      llmReply = JSON.stringify({
+        categories: [
+          { name: '登录流程', description: '登录与鉴权', ids: functional },
+          { name: 'NON_FUNCTIONAL', description: '无运行时行为变更', ids: config },
+          { name: 'NON_FUNCTIONAL', ids: [keys[2]] },
+        ],
+      });
+      const result = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-non-functional', entries, force: true });
+      assert.equal(result.ok, true, JSON.stringify(result.error));
+      assert.equal(result.value.grouping, 'logic');
+
+      const sentinels = result.value.categories.filter((category) => category.name === 'NON_FUNCTIONAL');
+      assert.equal(sentinels.length, 1, 'duplicate sentinel categories must merge');
+      assert.equal(sentinels[0].kind, 'non-functional');
+      assert.deepEqual(sentinels[0].ids, [...config, keys[2]]);
+      assert.equal(sentinels[0].description, '无运行时行为变更');
+
+      // Entries the model did not cover still go to 其他变更, not to the sentinel.
+      const classified = new Set([...functional, ...config, keys[2]]);
+      const remaining = keys.filter((key) => !classified.has(key));
+      assert.ok(remaining.length > 0, 'the reply deliberately omits entries');
+      const fallback = result.value.categories.find((category) => category.name === '其他变更');
+      assert.ok(fallback, 'missing entries must fall back to 其他变更');
+      assert.deepEqual(fallback.ids, remaining);
+      assert.equal(fallback.kind, undefined);
+      assert.equal(result.value.unassigned, remaining.length);
+    } finally {
+      await plugin.dispatch('settingsSet', { patch: { aiClassify: false, provider: null, model: null, aiGrouping: 'role' } });
+    }
+  });
+
+  test('parseClassification keeps the two-argument role-mode behaviour', () => {
+    const entries = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    const reply = JSON.stringify({ categories: [{ name: 'NON_FUNCTIONAL', ids: ['a'] }] });
+
+    // Two arguments means the default role mode: NON_FUNCTIONAL has no kind and
+    // the missing entries are appended to 其他变更 exactly as before.
+    const role = parseClassification(reply, entries);
+    assert.deepEqual(role.categories[0], { name: 'NON_FUNCTIONAL', ids: ['a'] });
+    assert.equal(role.categories[1].name, '其他变更');
+    assert.deepEqual(role.categories[1].ids, ['b', 'c']);
+
+    const logic = parseClassification(reply, entries, { grouping: 'logic' });
+    assert.equal(logic.categories[0].kind, 'non-functional');
+
+    const merged = parseClassification(
+      JSON.stringify({
+        categories: [
+          { name: 'NON_FUNCTIONAL', description: 'no runtime change', ids: ['a'] },
+          { name: 'NON_FUNCTIONAL', ids: ['b'] },
+        ],
+      }),
+      entries,
+      { grouping: 'logic' },
+    );
+    const sentinels = merged.categories.filter((category) => category.name === 'NON_FUNCTIONAL');
+    assert.equal(sentinels.length, 1);
+    assert.deepEqual(sentinels[0].ids, ['a', 'b']);
+    assert.equal(sentinels[0].kind, 'non-functional');
+    assert.deepEqual(merged.categories.find((category) => category.name === '其他变更').ids, ['c']);
+  });
+
+  test('the classification cache is sensitive to the grouping mode', async () => {
+    await plugin.dispatch('settingsSet', { patch: { aiClassify: true, provider: null, model: null, aiGrouping: 'role' } });
+    try {
+      const status = (await plugin.dispatch('status', { cwd: repoDir })).value;
+      const keys = status.entries.map((entry) => entry.key);
+      const entries = keys.map((key) => ({ key }));
+      llmReply = JSON.stringify({ categories: [{ name: '全部', ids: keys }] });
+
+      llmCalls = 0;
+      const role = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-cache-role', entries, force: true });
+      assert.equal(role.ok, true, JSON.stringify(role.error));
+      assert.equal(role.value.grouping, 'role');
+      assert.equal(llmCalls, 1);
+      const roleCached = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-cache-role-2', entries });
+      assert.equal(roleCached.ok, true);
+      assert.equal(roleCached.value.cached, true);
+      assert.equal(llmCalls, 1, 'the same mode must hit the cache');
+
+      // A different mode means a different prompt, so it must call the model again.
+      const logic = await plugin.dispatch('classify', {
+        cwd: repoDir,
+        requestId: 'req-cache-logic',
+        entries,
+        grouping: 'logic',
+      });
+      assert.equal(logic.ok, true, JSON.stringify(logic.error));
+      assert.equal(logic.value.grouping, 'logic');
+      assert.equal(logic.value.cached, false);
+      assert.equal(llmCalls, 2);
+      const logicCached = await plugin.dispatch('classify', {
+        cwd: repoDir,
+        requestId: 'req-cache-logic-2',
+        entries,
+        grouping: 'logic',
+      });
+      assert.equal(logicCached.value.cached, true);
+      assert.equal(llmCalls, 2);
+
+      // Changing the persisted mode clears the cache: the old role-mode entry is
+      // gone even if a later request explicitly asks for role mode again.
+      await plugin.dispatch('settingsSet', { patch: { aiGrouping: 'logic' } });
+      const afterClear = await plugin.dispatch('classify', {
+        cwd: repoDir,
+        requestId: 'req-cache-clear',
+        entries,
+        grouping: 'role',
+      });
+      assert.equal(afterClear.ok, true, JSON.stringify(afterClear.error));
+      assert.equal(afterClear.value.cached, false);
+      assert.equal(llmCalls, 3);
+    } finally {
+      await plugin.dispatch('settingsSet', { patch: { aiClassify: false, provider: null, model: null, aiGrouping: 'role' } });
+    }
+  });
+
+  test('idle pre-classification uses the persisted grouping mode', async () => {
+    await plugin.dispatch('status', { sessionId: 'session-mode-pre' });
+    await plugin.dispatch('settingsSet', {
+      patch: { aiClassify: true, preclassify: true, provider: null, model: null, aiGrouping: 'logic' },
+    });
+    try {
+      const status = (await plugin.dispatch('status', { sessionId: 'session-mode-pre' })).value;
+      assert.ok(status.entries.length > 0, 'expected a non-empty change set');
+      llmReply = JSON.stringify({ categories: [{ name: '全部', ids: status.entries.map((entry) => entry.key) }] });
+      llmCalls = 0;
+      llmRequest = null;
+      const warm = await plugin.preclassifySession('session-mode-pre');
+      assert.equal(warm.ok, true);
+      assert.equal(warm.cached, false);
+      assert.equal(llmCalls, 1);
+      assert.match(llmRequest.system, /NON_FUNCTIONAL/);
+      assert.match(llmRequest.system, /功能逻辑/);
+
+      const hit = await plugin.dispatch('classify', { sessionId: 'session-mode-pre', requestId: 'req-pre-mode-hit' });
+      assert.equal(hit.ok, true, JSON.stringify(hit.error));
+      assert.equal(hit.value.cached, true);
+      assert.equal(hit.value.grouping, 'logic');
+      assert.equal(llmCalls, 1, 'the warm pre-classification cache must be reused');
+    } finally {
+      await plugin.dispatch('settingsSet', {
+        patch: { preclassify: false, aiClassify: false, provider: null, model: null, aiGrouping: 'role' },
+      });
     }
   });
 });

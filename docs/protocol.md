@@ -201,7 +201,7 @@ HTTP 状态约定：
 | `pushPreview` | `{ sessionId?, cwd?, remote?: string, targetBranch?: string }` | `PushPreview` |
 | `push` | `{ sessionId?, cwd?, remote?: string, targetBranch?: string, setUpstream?: boolean }` | `PushResult` |
 | `remoteSet` | `{ sessionId?, cwd?, name: string, url: string }` | `RemoteSetResult` |
-| `classify` | `{ sessionId?, cwd?, requestId: string, entries?: Array<{ key: string }>, force?: boolean }` | `ClassifyResult` |
+| `classify` | `{ sessionId?, cwd?, requestId: string, entries?: Array<{ key: string }>, force?: boolean, grouping?: "role" \| "logic" }` | `ClassifyResult` |
 | `classifyCancel` | `{ requestId: string }` | `{ cancelled: boolean }` |
 | `models` | `{ sessionId? }` | `ModelCatalog` |
 | `settingsGet` | `{ sessionId? }` | `SettingsValue` |
@@ -224,7 +224,8 @@ HTTP 状态约定：
 - `remoteSet` 的 `name` 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$` 且不超过 200 字符；`url` 会先 `trim`，必须非空、不超过 2048 字符、不含控制字符且不以 `-` 开头（避免被当作 git 选项）。URL **只做语法校验**：Host 只写本地 Git 配置（同名远程用 `git remote set-url` 更新地址，不存在则 `git remote add`），不检查地址可达性、不发起网络请求，错误的地址或凭据由后续 push / fetch 的 Git 报错暴露。
 - `classify` 的 `entries` 只信任 `key`：Host 重新读取状态并用真实条目构造分类输入；提供的 key 不在当前状态中返回 `entry/not-found`，省略 `entries` 时归类当前状态的全部条目。
 - `classify` 的 `requestId` 用于取消和标识结果；同一 `requestId` 的新请求会中止旧请求，`classifyCancel` 可按 id 取消。
-- `settingsSet` 的 `patch` 支持 `aiClassify`（boolean）、`preclassify`（boolean，会话空闲时预归类）、`maxCandidates`（number）、`locale`（`"zh"` / `"en"` / `null`）、`customInstructions`（≤ 4000 字符的字符串 / `null`）、`provider` / `model`（字符串 / `null`，必须成对设置或清除）、`reasoningEffort`（≤ 64 字符的字符串 / `null`，属于当前模型的推理档位）。`null` 表示清除该字段。修改 `provider` / `model` 且未携带新的 `reasoningEffort` 时，Host 会清除旧档位，避免把 A 模型的档位应用到 B 模型。
+- `classify` 的 `grouping` 可选，取 `"role"`（按文件职能，默认）或 `"logic"`（按功能逻辑）；显式值优先于持久化设置 `aiGrouping`，只影响本次请求的提示词与分类语义，不改变设置。非法值返回 `ai/invalid` 且 `details.reason = "invalid-grouping"`，不会调用模型。结果里的 `grouping` 回报本次实际使用的模式，客户端据此丢弃切换模式后迟到的旧回复。
+- `settingsSet` 的 `patch` 支持 `aiClassify`（boolean）、`aiGrouping`（`"role"` / `"logic"`）、`preclassify`（boolean，会话空闲时预归类）、`maxCandidates`（number）、`locale`（`"zh"` / `"en"` / `null`）、`customInstructions`（≤ 4000 字符的字符串 / `null`）、`provider` / `model`（字符串 / `null`，必须成对设置或清除）、`reasoningEffort`（≤ 64 字符的字符串 / `null`，属于当前模型的推理档位）。`null` 表示清除该字段（`aiGrouping` 不接受 `null`，恢复默认值请显式发送 `"role"`）。修改 `provider` / `model` 且未携带新的 `reasoningEffort` 时，Host 会清除旧档位，避免把 A 模型的档位应用到 B 模型；修改 `aiGrouping` 会清空分类缓存。
 
 ## 5. 数据形状
 
@@ -402,9 +403,17 @@ type RemoteSetResult = {
 
 type ClassifyKey = { key: string }; // classify 请求只携带 key；元数据由 Host 从 status 重建
 
+type ClassifyCategory = {
+  name: string;
+  description?: string;
+  ids: string[];
+  kind?: 'non-functional';     // 仅逻辑模式：Host 把模型输出的保留分类名 NON_FUNCTIONAL 映射到此标记
+};
+
 type ClassifyResult = {
   requestId: string;
-  categories: { name: string; description?: string; ids: string[] }[];
+  grouping: 'role' | 'logic';  // 本次实际使用的分组模式（显式参数优先，否则持久化设置）
+  categories: ClassifyCategory[];
   source: 'ai';                // Host 自身从不静默降级；失败走错误封套
   model: string;               // 实际使用的 "provider/model"
   cached: boolean;
@@ -416,6 +425,7 @@ type ClassifyResult = {
 
 type SettingsValue = {
   aiClassify: boolean;
+  aiGrouping: 'role' | 'logic'; // AI 归类模式（默认 'role'）：按职能 / 按功能逻辑
   maxCandidates: number;
   preclassify: boolean;        // 会话空闲时预归类（默认 false；会静默消耗模型 token）
   locale?: 'zh' | 'en';
@@ -443,7 +453,7 @@ type ModelCatalog = {
 };
 ```
 
-设置默认值：`{ aiClassify: false, maxCandidates: 50, preclassify: false }`。
+设置默认值：`{ aiClassify: false, aiGrouping: 'role', maxCandidates: 50, preclassify: false }`。
 
 ### 5.1 协议上限
 
@@ -456,6 +466,7 @@ type ModelCatalog = {
 | push 预览提交 | 200 个 | 超出只列前 200 个 |
 | remote 名称 / URL | 名称 ≤ 200 字符且匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$`；URL ≤ 2048 字符 | 不合法返回 `remote/invalid`；URL 只做语法校验，不联网 |
 | 归类条目 | 设置 1–1000（默认 50），协议硬上限 400 | 超出部分计入 `omitted` |
+| 归类分类 | 最多 16 个；分类名 ≤ 48 字符、描述 ≤ 160 字符 | 超出分类忽略，超长名称 / 描述截断；逻辑模式下保留名 `NON_FUNCTIONAL` 映射为 `kind: "non-functional"` |
 | 归类超时 | 45 秒 | 超时中止并返回 `ai/aborted` 或 `ai/unavailable` |
 | stage / unstage 键 | 5000 个 | 超出返回 `internal` |
 | 归类摘录 | 20 个文件，每个 2 KiB / 前 24 行 / 约 1200 字符 | 只对 Host 判定的未跟踪文本文件生效；路径必须位于仓库根内且不是符号链接 |
@@ -524,7 +535,7 @@ staged:<oldPath>:<path>          # staged 的重命名 / 复制条目（path 为
 | `settings/invalid` | 设置 patch 不合法 |
 | `ai/disabled` | AI 归类已在设置中关闭 |
 | `ai/unavailable` | 没有可用的 `llm` 服务或可解析的模型路由，或模型请求失败（`details.reason` 携带稳定失败码，如 `NO_ADAPTER`、`AUTH`、`RATE_LIMIT`） |
-| `ai/invalid` | 模型回复不是约定的 JSON 结构，或没有任何可用分类 |
+| `ai/invalid` | 模型回复不是约定的 JSON 结构，或没有任何可用分类；也用于 `classify` 的非法 `grouping` 参数（`details.reason = "invalid-grouping"`，此时不会调用模型） |
 | `ai/aborted` | 归类请求被取消或超时中止 |
 | `internal` | 未预期错误或参数形状错误（未预期异常固定返回 `Internal error`，原文只进日志） |
 | `protocol/unknown-method` | Host 不认识请求的方法：常见于客户端 bundle 已更新但 Host 半未重启（两端版本不一致），重启 DSH 后重试 |

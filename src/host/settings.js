@@ -11,7 +11,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const DEFAULTS = Object.freeze({ aiClassify: false, maxCandidates: 50, preclassify: false });
+const DEFAULTS = Object.freeze({ aiClassify: false, aiGrouping: 'role', maxCandidates: 50, preclassify: false });
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME;
@@ -28,6 +28,9 @@ function normalize(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {};
   const next = {
     aiClassify: source.aiClassify === true,
+    // 'role' (default) groups by technical role; 'logic' groups by functional
+    // logic. Unknown persisted values degrade to the documented default.
+    aiGrouping: source.aiGrouping === 'logic' ? 'logic' : 'role',
     maxCandidates: clampInteger(source.maxCandidates, 1, 1000, DEFAULTS.maxCandidates),
     preclassify: source.preclassify === true,
   };

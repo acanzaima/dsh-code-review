@@ -689,25 +689,62 @@ test('settings dialog uses DSH-style rows, controls and switch geometry', () => 
 /* Shared-kit layout and interaction contracts                               */
 /* ------------------------------------------------------------------------- */
 
-test('AI grouping uses the shared toggle button and remains cancellable while grouping', () => {
+test('the grouping selector offers the three modes through the shared Select', () => {
   const runtime = createClientRuntime();
   const ui = runtime.require('ui');
+  const components = runtime.require('components');
   const t = runtime.require('i18n').createI18n('zh').t;
-  let toggles = 0;
-  const tree = runtime.require('components').TopBar({
-    t, aiMode: true, aiBusy: true, onToggleAiMode: () => { toggles += 1; },
-  });
-  const toggle = collectElements(tree).find((element) => element.type === ui.Button
-    && String(element.props.className || '').split(' ').includes('gr-btn-ai'));
-  assert.ok(toggle, 'AI grouping must use the shared button');
-  assert.equal(toggle.props.ariaLabel, t('nav.gitGroups'), 'the toggle names the view a click switches to');
-  const button = ui.Button(toggle.props);
-  assert.equal(button.props['aria-pressed'], true);
-  assert.equal(button.props.disabled, undefined, 'grouping can be turned off while its request is running');
-  button.props.onClick();
-  assert.equal(toggles, 1);
-  assert.equal(ui.Button({ active: false, disabled: true }).props['aria-pressed'], false);
-  assert.equal(ui.Button({ busy: true }).props.disabled, true);
+  const picked = [];
+  const render = (extra) => components.TopBar(Object.assign({
+    t,
+    status: { repo: null, summary: null },
+    repo: null,
+    onChangeGrouping: (value) => { picked.push(value); },
+  }, extra));
+  const selectOf = (tree) => collectElements(tree).find((element) => element.type === ui.Select);
+
+  // Git mode: the selector is present and marks Git status as the active option.
+  const git = selectOf(render({ aiMode: false, aiGrouping: 'role' }));
+  assert.ok(git, 'the toolbar replaces the Git/AI toggle with the shared Select');
+  assert.equal(git.props.className, 'gr-topbar-grouping', 'the compact selector owns the toolbar class');
+  assert.equal(git.props.value, 'git');
+  assert.equal(git.props.ariaLabel, t('nav.grouping'));
+  assert.deepEqual(git.props.options.map((option) => option.value), ['git', 'role', 'logic'],
+    'the menu lists Git status and the two AI grouping modes');
+  assert.deepEqual(git.props.options.map((option) => option.label),
+    [t('nav.gitGroups'), t('nav.aiGroupsRole'), t('nav.aiGroupsLogic')]);
+  assert.deepEqual(git.props.options.map((option) => option.title),
+    [t('nav.gitGroupsHint'), t('nav.aiGroupsRoleHint'), t('nav.aiGroupsLogicHint')],
+    'the option descriptions become the listbox row tooltips');
+  // Anchored listbox: the toolbar is a size container, so a fixed layer would be
+  // contained and clipped by it.
+  assert.equal(git.props.anchorMenu, true);
+
+  // The AI modes surface the persisted mode they belong to.
+  const role = selectOf(render({ aiMode: true, aiGrouping: 'role' }));
+  assert.equal(role.props.value, 'role');
+  const logic = selectOf(render({ aiMode: true, aiGrouping: 'logic' }));
+  assert.equal(logic.props.value, 'logic');
+
+  // Choosing an option reports the option value; only a different mode is sent.
+  picked.length = 0;
+  role.props.onChange('logic');
+  role.props.onChange('role');
+  assert.deepEqual(picked, ['logic'], 're-selecting the active mode is a no-op');
+
+  // A classify request may be running (`aiBusy`) without locking the selector:
+  // users can switch grouping off mid-request and the host aborts it.
+  assert.equal(selectOf(render({ aiMode: true, aiBusy: true })).props.disabled, undefined);
+  // A Git write does.
+  assert.equal(selectOf(render({ aiMode: false, busy: true })).props.disabled, true);
+
+  // The shared kit stays the single implementation: the toolbar selector is the
+  // same ui.Select primitive the settings dialog uses, not a bespoke dropdown.
+  assert.equal(git.type, ui.Select, 'the toolbar renders the shared Select');
+  assert.match(stylesSource, /\.gr-topbar \.gr-topbar-grouping \.gr-combo-trigger \{[^}]*height: 28px/,
+    'the toolbar trigger is compact enough for the action row');
+  assert.match(stylesSource, /\.gr-combo-menu-anchor \{[^}]*position: absolute/,
+    'the toolbar listbox is anchored instead of viewport-fixed');
 });
 
 test('settings disclosure retains the full data, operation and fallback explanations', () => {
@@ -727,6 +764,9 @@ test('settings disclosure retains the full data, operation and fallback explanat
     for (const key of ['ai.settingsDataNotice', 'ai.settingsScopeNotice', 'ai.settingsOffNote']) {
       assert.ok(collectText(disclosure).includes(t(key)), `${locale}: missing ${key}`);
     }
+    // The settings page explains where the three-way grouping selector lives;
+    // the old copy described a two-state toggle in the toolbar.
+    assert.ok(collectText(tree).includes(t('ai.settingsSwitchHint')), `${locale}: grouping selector hint`);
   }
   assert.match(stylesSource, /\.gr-settings-note-summary::-webkit-details-marker \{ display: none; \}/);
   assert.match(stylesSource, /\.gr-settings-note\[open\] \.gr-settings-note-chevron \{ transform: rotate\(90deg\)/);
@@ -856,45 +896,52 @@ test('diff rows paint the focus ring for keyboard focus only', () => {
 });
 
 /* ------------------------------------------------------------------------- */
-/* TopBar AI toggle — label names the grouping a click switches to           */
+/* TopBar grouping selector — the compact trigger names the active mode      */
 /* ------------------------------------------------------------------------- */
 
-test('TopBar AI toggle labels the grouping a click switches to', () => {
+test('the grouping trigger shows the active mode label and a chevron', () => {
   const runtime = createClientRuntime();
   const components = runtime.require('components');
+  const ui = runtime.require('ui');
   const t = runtime.require('i18n').createI18n('zh').t;
-  // The toolbar no longer carries stage-all/unstage-all, so its props stop at
-  // grouping, refresh, push and the optional settings/shortcut actions.
   const base = {
     t,
     status: { repo: null, summary: null },
     repo: null,
-    onToggleAiMode: function () {},
+    onChangeGrouping: function () {},
     onRefresh: function () {},
     onOpenPush: function () {},
   };
 
-  function renderAiToggle(aiMode) {
-    const tree = components.TopBar(Object.assign({}, base, { aiMode: aiMode }));
-    const element = collectElements(tree).find((candidate) =>
-      String(candidate.props.className || '').split(' ').includes('gr-btn-ai'));
-    assert.ok(element, 'AI grouping toggle is missing from the toolbar');
-    return element.type(element.props); // render the Button one level
+  function renderTrigger(extra) {
+    const tree = components.TopBar(Object.assign({}, base, extra));
+    const element = collectElements(tree).find((candidate) => candidate.type === ui.Select);
+    assert.ok(element, 'the grouping selector is missing from the toolbar');
+    return ui.Select(element.props); // render the Select one level
   }
 
-  // Real bug: with grouping already active the label still said "AI 归类",
-  // even though the tooltip already named the Git-status fallback.
-  const off = renderAiToggle(false);
-  assert.equal(off.props.title, 'AI 归类');
-  assert.equal(off.props['aria-label'], 'AI 归类');
-  assert.equal(collectText(off), 'AI 归类');
-  assert.equal(off.props['aria-pressed'], false);
+  // Git status is the default grouping and is named on the trigger.
+  const git = renderTrigger({ aiMode: false });
+  const gitTrigger = collectElements(git).find((element) => elementClasses(element).includes('gr-combo-trigger'));
+  assert.ok(gitTrigger, 'the selector renders a themed trigger');
+  assert.equal(collectText(git), t('nav.gitGroups'));
+  assert.equal(gitTrigger.props['aria-label'], t('nav.grouping'));
+  assert.equal(gitTrigger.props['aria-haspopup'], 'listbox');
+  const chevron = collectElements(gitTrigger).find((element) => elementClasses(element).includes('gr-combo-chevron'));
+  assert.ok(chevron, 'the compact trigger carries the DSH menu chevron');
+  assert.equal(gitTrigger.props.title, undefined, 'the mode explanation lives on the menu options, not the trigger');
 
-  const on = renderAiToggle(true);
-  assert.equal(on.props.title, 'Git 状态');
-  assert.equal(on.props['aria-label'], 'Git 状态');
-  assert.equal(collectText(on), 'Git 状态');
-  assert.equal(on.props['aria-pressed'], true);
+  // The AI modes name themselves, so users can tell role and logic apart at a
+  // glance without opening the menu.
+  const role = renderTrigger({ aiMode: true, aiGrouping: 'role' });
+  assert.equal(collectText(role), t('nav.aiGroupsRole'));
+  const logic = renderTrigger({ aiMode: true, aiGrouping: 'logic' });
+  assert.equal(collectText(logic), t('nav.aiGroupsLogic'));
+  assert.notEqual(t('nav.aiGroupsRole'), t('nav.aiGroupsLogic'));
+
+  // The old toggle (a single pressed button) is gone: the toolbar renders no
+  // `gr-btn-ai` element any more.
+  assert.equal(elementsByClass(components.TopBar(Object.assign({}, base, { aiMode: true })), 'gr-btn-ai').length, 0);
 });
 
 /* ------------------------------------------------------------------------- */
@@ -908,10 +955,11 @@ test('the toolbar no longer renders stage-all/unstage-all bulk buttons', () => {
   const tree = components.TopBar({
     t,
     aiMode: true,
+    aiGrouping: 'role',
     busy: false,
     status: { repo: null, summary: null },
     repo: null,
-    onToggleAiMode: () => {},
+    onChangeGrouping: () => {},
     onReclassify: () => {},
     onRefresh: () => {},
     onOpenPush: () => {},
@@ -949,9 +997,10 @@ test('reclassify uses the layers glyph while refresh keeps the refresh glyph', (
   const render = (aiMode) => components.TopBar({
     t,
     aiMode,
+    aiGrouping: 'role',
     status: { repo: null, summary: null },
     repo: null,
-    onToggleAiMode: () => {},
+    onChangeGrouping: () => {},
     onReclassify: () => {},
     onRefresh: () => {},
     onOpenPush: () => {},
@@ -979,10 +1028,13 @@ test('reclassify uses the layers glyph while refresh keeps the refresh glyph', (
   const shape = (svg) => svg.props.children.map((child) => child.props.d);
   assert.notDeepEqual(shape(layersSvg), shape(refreshSvg), 'the two icons must not share the same paths');
 
-  // AI grouping toggle keeps the spark semantics.
-  const aiButton = withAi.find((element) => elementClasses(element).includes('gr-btn-ai'));
-  assert.ok(aiButton, 'the AI grouping toggle is still in the toolbar');
-  assert.equal(aiButton.props.leading.type.name, 'IconSpark');
+  // AI grouping keeps a selector in place of the old spark toggle, so the two
+  // operations (regroup vs refresh) can never be confused with it.
+  const ui = runtime.require('ui');
+  const groupingSelect = withAi.find((element) => element.type === ui.Select);
+  assert.ok(groupingSelect, 'the grouping selector is still in the toolbar');
+  assert.equal(groupingSelect.props.value, 'role');
+  assert.equal(groupingSelect.props.options.length, 3);
 
   // Without AI grouping there is no reclassify control to confuse with refresh.
   const gitOnly = collectElements(render(false));
@@ -2702,6 +2754,188 @@ test('classification results map entry keys to paths and drop unmappable categor
   assert.equal(typeof named[0].name, 'string');
 });
 
+test('the non-functional category keeps its kind and is localized in the navigation', () => {
+  const runtime = createClientRuntime();
+  const app = runtime.require('app');
+  const keyPaths = { 'unstaged:config': 'vite.config.js', 'unstaged:feature': 'src/feature.js' };
+  const result = {
+    grouping: 'logic',
+    categories: [
+      { kind: 'non-functional', name: 'NON_FUNCTIONAL', description: '构建与 CI 配置', ids: ['unstaged:config'] },
+      { name: '登录功能', description: '登录调用链', ids: ['unstaged:feature'] },
+    ],
+  };
+  // The kind travels from the Host reply to the path groups, so the navigation
+  // can localize the machine name (`NON_FUNCTIONAL`) instead of showing it.
+  assert.deepEqual(app.aiPathGroups(result, keyPaths), [
+    { name: 'NON_FUNCTIONAL', description: '构建与 CI 配置', paths: ['vite.config.js'], kind: 'non-functional' },
+    { name: '登录功能', description: '登录调用链', paths: ['src/feature.js'] },
+  ]);
+  // A non-functional category without a description still carries the kind.
+  const bare = app.aiPathGroups({ categories: [
+    { kind: 'non-functional', name: 'NON_FUNCTIONAL', ids: ['unstaged:config'] },
+  ] }, keyPaths);
+  assert.equal(bare[0].kind, 'non-functional');
+  assert.equal(bare[0].description, '');
+  // The app forwards the kind through the AI group list and the search filter.
+  assert.match(appSource, /kind: category\.kind === 'non-functional' \? 'non-functional' : ''/);
+  assert.match(appSource, /description: group\.description, kind: group\.kind/);
+
+  const entries = [
+    { key: 'unstaged:config', status: 'unstaged', path: 'vite.config.js', change: 'modified' },
+    { key: 'unstaged:feature', status: 'unstaged', path: 'src/feature.js', change: 'modified' },
+  ];
+  for (const locale of ['zh', 'en']) {
+    const t = runtime.require('i18n').createI18n(locale).t;
+    const tree = renderFileNav(runtime, {
+      locale,
+      groups: [
+        {
+          id: 'ai:NON_FUNCTIONAL', label: 'NON_FUNCTIONAL', kind: 'non-functional',
+          description: '构建与 CI 配置', tone: 'ai', entries: [entries[0]],
+        },
+        { id: 'ai:登录功能', label: '登录功能', description: '登录调用链', tone: 'ai', entries: [entries[1]] },
+      ],
+    });
+    const heads = elementsByClass(tree.tree, 'gr-group-head-btn');
+    assert.equal(heads.length, 2, `${locale}: both groups render headers`);
+    const nonFunctional = heads[0];
+    assert.ok(collectText(nonFunctional).includes(t('nav.nonFunctional')),
+      `${locale}: the non-functional heading is localized`);
+    assert.equal(collectText(nonFunctional).includes('NON_FUNCTIONAL'), false,
+      `${locale}: the machine category name is never user-facing`);
+    assert.equal(nonFunctional.props.title, '构建与 CI 配置',
+      `${locale}: the model description is the group tooltip`);
+    // The regular AI category keeps its own label/tooltip untouched.
+    assert.ok(collectText(heads[1]).includes('登录功能'));
+
+    // Without a description the tooltip falls back to localized copy.
+    const fallback = renderFileNav(runtime, {
+      locale,
+      groups: [{
+        id: 'ai:NON_FUNCTIONAL', label: 'NON_FUNCTIONAL', kind: 'non-functional',
+        tone: 'ai', entries: [entries[0]],
+      }],
+    });
+    const fallbackHead = elementsByClass(fallback.tree, 'gr-group-head-btn')[0];
+    assert.equal(fallbackHead.props.title, t('nav.nonFunctionalHint'),
+      `${locale}: the fallback tooltip explains the non-functional bucket`);
+  }
+
+  // The group checkbox keeps the existing per-group staging behavior.
+  const calls = [];
+  const groupTree = renderFileNav(runtime, {
+    locale: 'zh',
+    groups: [{
+      id: 'ai:NON_FUNCTIONAL', label: 'NON_FUNCTIONAL', kind: 'non-functional',
+      tone: 'ai', entries: [entries[0], entries[1]],
+    }],
+    onToggleGroupStaged: (list, next) => { calls.push([list.length, next]); },
+  });
+  const groupCheck = elementsByClass(groupTree.tree, 'gr-group-check')[0];
+  assert.ok(groupCheck, 'the non-functional group keeps its staging checkbox');
+  assert.equal(groupCheck.props.disabled, false);
+  groupCheck.props.onChange(true);
+  assert.deepEqual(calls, [[2, true]], 'checking the group stages all of its entries');
+});
+
+test('the grouping selector maps each option to the persisted settings patch', () => {
+  const runtime = createClientRuntime();
+  const app = runtime.require('app');
+  assert.equal(typeof app.groupingSettingsPatch, 'function');
+  assert.deepEqual(app.groupingSettingsPatch('git'), { aiClassify: false },
+    'Git status only turns AI grouping off');
+  assert.deepEqual(app.groupingSettingsPatch('role'), { aiClassify: true, aiGrouping: 'role' });
+  assert.deepEqual(app.groupingSettingsPatch('logic'), { aiClassify: true, aiGrouping: 'logic' });
+
+  // The persisted mode is read back from the Host, merged optimistically and
+  // handed to the settings dialog as well.
+  assert.match(appSource, /aiGrouping: value && value\.aiGrouping === 'logic' \? 'logic' : 'role'/);
+  assert.match(appSource, /if \('aiGrouping' in patch\) nextValue\.aiGrouping = patch\.aiGrouping === 'logic' \? 'logic' : 'role';/);
+  assert.match(appSource, /var keys = \['aiClassify', 'aiGrouping', /);
+  assert.match(stateSource, /value: \{ aiClassify: false, aiGrouping: 'role', /);
+  assert.match(appSource, /aiGrouping: value\.aiGrouping === 'logic' \? 'logic' : 'role',\s*preclassify/);
+
+  // TopBar receives the live mode and the patch writer; the old toggle callback
+  // is gone and reclassify just re-requests the active classification.
+  assert.match(appSource, /aiMode: aiEnabled,\s*aiGrouping: aiGrouping,/);
+  assert.match(appSource, /onChangeGrouping: function \(value\) \{\s*saveSettings\(groupingSettingsPatch\(value\)\)/);
+  const topBarStart = appSource.indexOf('h(components.TopBar, {');
+  const topBarBlock = appSource.slice(topBarStart, appSource.indexOf('var fileNav', topBarStart));
+  assert.equal(topBarBlock.includes('onToggleAiMode'), false, 'the old Git/AI toggle callback is gone');
+  assert.match(topBarBlock, /onReclassify: function \(\) \{\s*requestAi\(\{ force: true \}\);/,
+    'regroup only asks for a fresh classification of the active mode');
+});
+
+test('classify requests carry the grouping mode and replies from another mode are dropped', () => {
+  const runtime = createClientRuntime();
+  const app = runtime.require('app');
+  assert.equal(typeof app.groupingSettingsPatch, 'function');
+
+  // Request: the mode snapshot is part of the protocol payload.
+  assert.match(appSource, /var requestedGrouping = aiGroupingRef\.current;/);
+  assert.match(appSource, /var params = \{ requestId: requestId, entries: payloadEntries, grouping: requestedGrouping \};/);
+
+  // Reply: only accept a result that names both the requested and the still
+  // active grouping mode (a late reply for the old mode is ignored).
+  assert.match(appSource, /var activeGrouping = aiGroupingRef\.current;/);
+  assert.match(appSource, /value\.grouping === 'role' \|\| value\.grouping === 'logic'/);
+  assert.match(appSource, /if \(requestedGrouping !== activeGrouping \|\| responseGrouping !== activeGrouping\) return;/);
+
+  // Switching the mode cancels the in-flight request and resets the rendered
+  // state, then the auto-request effect (which depends on aiGrouping) re-runs.
+  const resetStart = appSource.indexOf('/* Role and logic grouping produce different categories');
+  assert.notEqual(resetStart, -1, 'the mode-switch reset effect is discoverable');
+  const resetEnd = appSource.indexOf('}, [aiEnabled, aiGrouping, cancelAiRequest]);', resetStart);
+  assert.ok(resetEnd > resetStart, 'the mode-switch reset effect ends where expected');
+  const resetBlock = appSource.slice(resetStart, resetEnd);
+  assert.match(resetBlock, /if \(previousGroupingRef\.current === aiGrouping\) return;/);
+  assert.match(resetBlock, /cancelAiRequest\(\);/);
+  assert.match(resetBlock, /setAiState\(\{ signature: null, result: null, pathGroups: null, loading: false, error: null, notice: null, model: null \}\);/);
+  assert.match(appSource, /\}, \[aiEnabled, aiGrouping, open, repoRoot, entriesSignature, entries\.length, aiState\.signature, aiState\.result\]\);/,
+    'the auto-request effect re-runs when the grouping mode changes');
+});
+
+test('grouping selector and non-functional copy exist in both dictionaries', () => {
+  const runtime = createClientRuntime();
+  const i18n = runtime.require('i18n');
+  const zh = i18n.DICTIONARIES.zh;
+  const en = i18n.DICTIONARIES.en;
+  const keys = [
+    'nav.grouping', 'nav.gitGroups', 'nav.gitGroupsHint',
+    'nav.aiGroupsRole', 'nav.aiGroupsRoleHint',
+    'nav.aiGroupsLogic', 'nav.aiGroupsLogicHint', 'nav.reclassify',
+    'nav.nonFunctional', 'nav.nonFunctionalHint',
+    'ai.settingsSwitchHint', 'ai.settingsDescription', 'ai.settingsDataNotice',
+  ];
+  for (const key of keys) {
+    for (const [locale, dict] of [['zh', zh], ['en', en]]) {
+      assert.equal(typeof dict[key], 'string', `${locale}: missing ${key}`);
+      assert.ok(dict[key].trim().length > 0, `${locale}: empty ${key}`);
+    }
+  }
+  assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort(), 'dictionaries stay in lockstep');
+  assert.equal(Object.prototype.hasOwnProperty.call(zh, 'nav.aiGroups'), false,
+    'the obsolete two-state AI label was removed');
+  assert.equal(Object.prototype.hasOwnProperty.call(en, 'nav.aiGroups'), false);
+  // The logic mode reads as functional logic in both languages; the
+  // non-functional bucket has its own localized user-facing copy.
+  assert.match(zh['nav.aiGroupsLogic'], /功能逻辑/);
+  assert.match(en['nav.aiGroupsLogic'], /feature logic/i);
+  assert.match(zh['nav.nonFunctional'], /非功能/);
+  assert.match(en['nav.nonFunctional'], /Non-functional/i);
+  assert.notEqual(zh['nav.nonFunctional'], en['nav.nonFunctional']);
+  assert.notEqual(zh['nav.aiGroupsRole'], zh['nav.aiGroupsLogic']);
+  assert.notEqual(en['nav.aiGroupsRole'], en['nav.aiGroupsLogic']);
+  // The settings copy describes the selector, not the removed Git/AI toggle,
+  // and the data notice covers both AI modes.
+  assert.doesNotMatch(zh['ai.settingsSwitchHint'], /开启后显示「Git 状态」/);
+  assert.match(zh['ai.settingsSwitchHint'], /按功能逻辑/);
+  assert.match(en['ai.settingsSwitchHint'], /feature logic/i);
+  assert.match(zh['ai.settingsDataNotice'], /按职能还是按功能逻辑/);
+  assert.match(en['ai.settingsDataNotice'], /either by role or by feature logic/);
+});
+
 test('app keeps AI state path-based and preserves the grouping while a request loads', () => {
   // The grouping signature is the path-based helper, never key/status based.
   assert.match(appSource, /var entriesSignature = useMemo\(function \(\) \{\s*return aiEntriesSignature\(entries\);/);
@@ -2740,7 +2974,7 @@ test('an empty change set clears the stale AI grouping state and notice', () => 
 
   const effectStart = appSource.indexOf('// Turning AI grouping off, or switching repository, drops any pending result.');
   const effectEnd = appSource.indexOf(
-    '}, [aiEnabled, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);',
+    '}, [aiEnabled, aiGrouping, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);',
     effectStart,
   );
   assert.ok(effectStart !== -1 && effectEnd > effectStart, 'the AI sync effect source is discoverable');

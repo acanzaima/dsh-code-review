@@ -329,8 +329,13 @@ __def('i18n', function (exports, require, React) {
       'nav.noMatchHint': '换个关键词试试',
       'nav.noChanges': '暂无变更',
       'nav.clearSearch': '清除搜索',
-      'nav.aiGroups': 'AI 归类',
+      'nav.grouping': '分组方式',
       'nav.gitGroups': 'Git 状态',
+      'nav.gitGroupsHint': '按 Git 状态分组：已暂存 / 未暂存 / 未跟踪 / 冲突',
+      'nav.aiGroupsRole': 'AI 归类 · 按职能',
+      'nav.aiGroupsRoleHint': 'AI 按文件在项目中的职能分组，例如组件、业务功能、配置与测试',
+      'nav.aiGroupsLogic': 'AI 归类 · 按功能逻辑',
+      'nav.aiGroupsLogicHint': 'AI 按功能逻辑分组，同一调用链或功能相关的文件放在一起',
       'nav.reclassify': '重新归类',
       'nav.checkStaged': '加入暂存区以提交',
       'nav.uncheckStaged': '移出暂存区，不提交',
@@ -342,6 +347,8 @@ __def('i18n', function (exports, require, React) {
       'nav.aiStale': '变更已更新，AI 归类正在刷新…',
       'nav.aiPending': '新条目已显示，AI 归类尚未完成',
       'nav.other': '其他变更',
+      'nav.nonFunctional': '非功能变更',
+      'nav.nonFunctionalHint': '不改变运行时行为的改动：配置、构建、CI、文档、依赖或格式',
       'nav.collapse': '折叠',
       'nav.expand': '展开',
       'nav.expandAll': '全部展开',
@@ -470,7 +477,7 @@ __def('i18n', function (exports, require, React) {
       'push.rejectedHint': '远程拒绝了这次推送，请先拉取并合并，插件不会自动强制推送',
       'ai.settingsTitle': 'AI 智能归类',
       'ai.settingsAbout': 'AI 只重新组织左侧导航的分组方式：按项目语义把本批变更归到若干分类，帮助你更快理解整批改动；它不改变 Git 状态、比较基准或任何操作范围，也不会自动暂存、还原、提交或推送。',
-      'ai.settingsSwitchHint': '分组按钮在审阅面板顶部：未开启时显示「AI 归类」，开启后显示「Git 状态」；这里只配置它的行为和模型。',
+      'ai.settingsSwitchHint': '分组方式在审阅面板工具栏切换：Git 状态 / AI 归类 · 按职能 / AI 归类 · 按功能逻辑；这里只配置它的行为和模型。',
       'ai.settingsModelTitle': '使用模型',
       'ai.settingsModelDesc': '默认使用当前会话的模型；手动选择模型与推理等级后会记住该选择。',
       'ai.settingsModelDefault': '当前会话模型：{model}',
@@ -488,10 +495,10 @@ __def('i18n', function (exports, require, React) {
       'ai.settingsPromptDesc': '告诉 AI 你希望如何分组，例如按业务域划分，或将测试与夹具放在一起。',
       'ai.settingsPromptPlaceholder': '例如：优先按业务域分组；把测试与 fixtures 归到「测试」；配置和构建脚本合并为「工程配置」。',
       'ai.settingsMaxDesc': '单次归类最多包含的变更条目数（1–1000）。',
-      'ai.settingsDescription': '按项目语义组织文件导航。默认关闭，可在工具栏开启「AI 归类」。',
+      'ai.settingsDescription': '按项目语义组织文件导航。开启后可选择按职能或按功能逻辑分组；默认按 Git 状态分组。',
       'ai.settingsDetails': '了解数据发送范围与操作边界',
       'ai.settingsOffNote': '关闭或归类失败时，仍按 Git 状态（已暂存 / 未暂存 / 未跟踪 / 冲突）分组。',
-      'ai.settingsDataNotice': '开启并触发归类后会发送：变更文件的路径、Git 状态、变更类型、增删行数，以及最多 20 个新增文本文件的有限片段（每个约 24 行）。不会发送整个仓库；疑似包含凭据的文件不会发送内容。',
+      'ai.settingsDataNotice': '开启并触发归类后（无论按职能还是按功能逻辑）会发送：变更文件的路径、Git 状态、变更类型、增删行数，以及最多 20 个新增文本文件的有限片段（每个约 24 行）。不会发送整个仓库；疑似包含凭据的文件不会发送内容。',
       'ai.settingsScopeNotice': 'AI 只改变左侧导航的分组方式，不会改变 Git 状态、比较基准或任何操作范围，也不会自动触发暂存、还原、提交或推送。',
       'ai.settingsModelUnknown': '当前没有可用的默认模型，归类会失败并回退到 Git 分组。',
       'ai.settingsMax': '最多归类条目数',
@@ -712,8 +719,13 @@ __def('i18n', function (exports, require, React) {
       'nav.noMatchHint': 'Try different keywords',
       'nav.noChanges': 'No changes',
       'nav.clearSearch': 'Clear search',
-      'nav.aiGroups': 'AI groups',
+      'nav.grouping': 'Grouping',
       'nav.gitGroups': 'Git status',
+      'nav.gitGroupsHint': 'Group by Git status: staged / unstaged / untracked / conflicts',
+      'nav.aiGroupsRole': 'AI groups · by role',
+      'nav.aiGroupsRoleHint': 'AI groups files by their role in the project, such as components, features, config and tests',
+      'nav.aiGroupsLogic': 'AI groups · feature logic',
+      'nav.aiGroupsLogicHint': 'AI groups by functional logic, keeping one feature or call chain together',
       'nav.reclassify': 'Regroup',
       'nav.checkStaged': 'Add to the commit (stage)',
       'nav.uncheckStaged': 'Remove from the commit (unstage)',
@@ -725,6 +737,8 @@ __def('i18n', function (exports, require, React) {
       'nav.aiStale': 'Changes updated, refreshing AI groups…',
       'nav.aiPending': 'New entries are visible; AI grouping still pending',
       'nav.other': 'Other changes',
+      'nav.nonFunctional': 'Non-functional changes',
+      'nav.nonFunctionalHint': 'Changes that do not alter runtime behaviour: config, build, CI, docs, dependencies or formatting',
       'nav.collapse': 'Collapse',
       'nav.expand': 'Expand',
       'nav.expandAll': 'Expand all',
@@ -853,7 +867,7 @@ __def('i18n', function (exports, require, React) {
       'push.rejectedHint': 'The remote rejected this push; pull and merge first. The plugin never force-pushes',
       'ai.settingsTitle': 'AI smart grouping',
       'ai.settingsAbout': 'AI only re-organises the left navigation: it groups this change set into semantic categories so the batch is easier to grasp. It never changes Git state, comparison bases or operation scope, and never stages, discards, commits or pushes.',
-      'ai.settingsSwitchHint': 'The grouping button sits in the review panel toolbar: it reads \u201cAI groups\u201d while grouping is off and \u201cGit status\u201d while it is on; this dialog only configures its behaviour and model.',
+      'ai.settingsSwitchHint': 'The grouping mode is switched in the review panel toolbar: Git status / AI groups · by role / AI groups · feature logic; this dialog only configures its behaviour and model.',
       'ai.settingsModelTitle': 'Model',
       'ai.settingsModelDesc': 'Uses the current session model by default; a manual model and reasoning level are remembered.',
       'ai.settingsModelDefault': 'Current session model: {model}',
@@ -871,10 +885,10 @@ __def('i18n', function (exports, require, React) {
       'ai.settingsPromptDesc': 'Tell AI how you prefer to group files, such as by business domain or keeping tests and fixtures together.',
       'ai.settingsPromptPlaceholder': 'e.g. group by business domain first; put tests and fixtures under \u201cTests\u201d; merge config and build scripts into \u201cEngineering\u201d.',
       'ai.settingsMaxDesc': 'Maximum number of change entries classified in one request (1\u20131000).',
-      'ai.settingsDescription': 'Organise files by project semantics. Off by default; enable AI groups in the toolbar.',
+      'ai.settingsDescription': 'Organise files by project semantics. When enabled, choose grouping by role or by feature logic; Git status is the default.',
       'ai.settingsDetails': 'Data sharing and operation boundaries',
       'ai.settingsOffNote': 'When disabled or when grouping fails, the navigation falls back to Git status (staged / unstaged / untracked / conflicts).',
-      'ai.settingsDataNotice': 'When enabled and grouping runs, this is sent: changed file paths, Git status, change kind, added/removed line counts, and bounded excerpts of up to 20 newly added text files (~24 lines each). The repository is never uploaded, and files that look like credentials are never excerpted.',
+      'ai.settingsDataNotice': 'When enabled and grouping runs (either by role or by feature logic), this is sent: changed file paths, Git status, change kind, added/removed line counts, and bounded excerpts of up to 20 newly added text files (~24 lines each). The repository is never uploaded, and files that look like credentials are never excerpted.',
       'ai.settingsScopeNotice': 'AI only changes how the left navigation is grouped. It never changes Git state, comparison bases or operation scope, and never stages, discards, commits or pushes.',
       'ai.settingsModelUnknown': 'No default model is available; grouping will fail and fall back to Git groups.',
       'ai.settingsMax': 'Maximum entries to classify',
@@ -1364,7 +1378,7 @@ __def('state', function (exports, require, React) {
     loaded: false,
     saving: false,
     error: null,
-    value: { aiClassify: false, maxCandidates: 50, reasoningEffort: null },
+    value: { aiClassify: false, aiGrouping: 'role', maxCandidates: 50, reasoningEffort: null },
     locale: null,
     model: null,
   });
@@ -4513,8 +4527,10 @@ __def('styles', function (exports) {
 /* One line on wide panels; when the panel gets narrow the action cluster wraps
  * onto a second row instead of squeezing the identity/summary or clipping the
  * actions. Height is auto (min 54px) so the toolbar grows rather than truncating
- * content. */
-.gr-topbar { container-type: inline-size; container-name: gr-topbar; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; align-content: center; column-gap: 12px; row-gap: 6px; height: auto; min-height: 54px; padding: 8px 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12.5px; overflow: hidden; }
+ * content. Overflow stays visible because the toolbar is a size container: its
+ * grouping selector anchors its listbox below the trigger (see
+ * .gr-combo-menu-anchor), and a clipped container would hide it. */
+.gr-topbar { container-type: inline-size; container-name: gr-topbar; position: relative; z-index: 5; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; align-content: center; column-gap: 12px; row-gap: 6px; height: auto; min-height: 54px; padding: 8px 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12.5px; overflow: visible; }
 .gr-topbar-repo { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 46%; }
 /* An empty identity slot (branch chip / tracking hidden) must not claim a flex
  * row or a gap on narrow panels. */
@@ -4552,9 +4568,15 @@ __def('styles', function (exports) {
 .gr-topbar-actions .gr-iconbtn, .gr-topbar-actions .gr-btn { flex: 0 0 auto; }
 .gr-topbar-actions .gr-iconbtn { width: 30px; height: 30px; }
 .gr-topbar-actions .gr-topbar-sep { margin: 0 4px; }
-.gr-topbar .gr-btn-ai { padding: 0 9px; color: var(--dsw-alias-label-secondary); }
-.gr-topbar .gr-btn-ai:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
-.gr-topbar .gr-btn-ai.gr-btn-toggled { color: var(--dsw-alias-brand-primary); }
+/* Grouping selector (Git status / AI role / AI logic): a compact DSH-menu
+ * trigger that fits the action row without pushing the push/settings controls
+ * out of the toolbar. The listbox is anchored inside the combo rather than
+ * viewport-fixed because the toolbar's size container would contain and clip a
+ * fixed-position descendant. */
+.gr-topbar .gr-topbar-grouping { width: auto; max-width: 200px; flex: 0 0 auto; }
+.gr-topbar .gr-topbar-grouping .gr-combo-trigger { width: auto; max-width: 200px; height: 28px; gap: 6px; padding: 0 8px; border-radius: var(--dsw-radius-sm, 6px); font-size: 12px; line-height: 16px; }
+.gr-topbar .gr-topbar-grouping .gr-combo-value { flex: 0 1 auto; }
+.gr-topbar .gr-topbar-grouping .gr-combo-chevron .gr-ico { width: 12px; height: 12px; }
 .gr-topbar-push { min-width: 64px; }
 /* AI grouping state rides after the change summary inside the shrinkable
  * toolbar middle. It is part of the summary row, so it never claims a row of
@@ -4581,14 +4603,13 @@ __def('styles', function (exports) {
   .gr-topbar .gr-tag { display: none; }
   .gr-topbar-actions { flex: 1 1 100%; justify-content: flex-end; margin-left: 0; }
   .gr-ai-row { max-width: 55%; }
-  .gr-topbar .gr-btn-ai .gr-btn-label { display: inline; }
-  .gr-topbar .gr-btn-ai { padding: 0 9px; }
 }
 @container gr-topbar (max-width: 700px) {
   .gr-topbar-repo .gr-tracking { display: none; }
   .gr-topbar-actions { gap: 2px; }
   .gr-topbar-actions .gr-topbar-sep { margin: 0 1px; }
   .gr-topbar-push { min-width: 0; padding: 0 8px; }
+  .gr-topbar .gr-topbar-grouping .gr-combo-trigger { padding: 0 7px; }
 }
 
 /* ---------- modal / dialogs ---------- */
@@ -4901,6 +4922,10 @@ __def('styles', function (exports) {
  * 14/360px width bounds, elevation-prominent shadow with a hairline stroke,
  * 34px items and a 14px label-primary check. */
 .gr-combo-menu { position: fixed; z-index: 1300; display: flex; flex-direction: column; box-sizing: border-box; min-width: 0; width: auto; max-width: min(360px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 24px)); overflow: auto; padding: 4px; border: 0; border-radius: var(--dsw-radius-lg, 10px); background: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-layer-2)); backdrop-filter: var(--dsw-menu-backdrop-filter, blur(12px)); box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3, 0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent))); --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); outline: none; font-size: 13px; color: var(--dsw-alias-label-primary); scrollbar-width: thin; }
+/* Anchored listbox: some triggers (the toolbar grouping selector) live inside a
+ * size container, which makes a viewport-fixed layer both contained and
+ * clipped. This placement hangs the menu off the trigger root instead. */
+.gr-combo-menu-anchor { position: absolute; top: calc(100% + 4px); right: 0; bottom: auto; min-width: max(100%, 168px); max-width: min(320px, calc(100vw - 16px)); }
 .gr-combo-option { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 6px 8px; border-radius: var(--dsw-radius-md, 8px); font-size: 13px; line-height: 20px; cursor: pointer; }
 .gr-combo-option-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gr-combo-option-active { background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-4, var(--dsw-alias-bg-layer-2))); }
@@ -5348,12 +5373,17 @@ __def('ui', function (exports, require, React) {
 
   /**
    * Contract props: { value, options: [{ value, label, title?, disabled? }],
-   * onChange(value), ariaLabel, disabled, placeholder, className }.
+   * onChange(value), ariaLabel, disabled, placeholder, className, anchorMenu }.
    *
    * A custom dropdown instead of a native <select>: the native popup and its
    * focus ring are rendered by the OS and can only look like a big black box,
    * which breaks the DSH settings look. This one is themed with tokens, has a
    * soft focus ring and a real listbox keyboard model.
+   *
+   * `anchorMenu` renders the listbox as an absolutely positioned child of the
+   * trigger root instead of a viewport-fixed layer. Use it for triggers inside a
+   * size container (`.gr-topbar`): layout containment would contain — and the
+   * container's overflow could clip — a fixed-position descendant.
    */
   function Select(props) {
     var openState = React.useState(false);
@@ -5370,6 +5400,7 @@ __def('ui', function (exports, require, React) {
 
     var options = Array.isArray(props.options) ? props.options : [];
     var disabled = !!props.disabled;
+    var anchorMenu = !!props.anchorMenu;
     var selectedIndex = -1;
     var selectedOption = null;
     for (var index = 0; index < options.length; index += 1) {
@@ -5384,6 +5415,9 @@ __def('ui', function (exports, require, React) {
     useLayoutEffect(function () {
       if (!open) return undefined;
       function measure() {
+        /* Anchored menus are positioned by their CSS class and the trigger
+         * root, so they never need viewport measurement. */
+        if (anchorMenu) return;
         var node = rootRef.current;
         if (!node) return;
         var rect = node.getBoundingClientRect();
@@ -5421,7 +5455,7 @@ __def('ui', function (exports, require, React) {
         window.removeEventListener('scroll', onReposition, true);
         window.removeEventListener('resize', onReposition);
       };
-    }, [open]);
+    }, [open, anchorMenu]);
 
     React.useEffect(function () {
       if (!open) return;
@@ -5496,20 +5530,22 @@ __def('ui', function (exports, require, React) {
       }
     }
 
-    var menu = open && position !== null
+    var menu = open && (anchorMenu || position !== null)
       ? h('div', {
-        className: 'gr-combo-menu',
+        className: cx('gr-combo-menu', anchorMenu && 'gr-combo-menu-anchor'),
         role: 'listbox',
         tabIndex: -1,
         ref: menuRef,
         'aria-label': props.ariaLabel || undefined,
-        style: {
-          top: position.top === undefined ? undefined : position.top + 'px',
-          bottom: position.bottom === undefined ? undefined : position.bottom + 'px',
-          right: position.right + 'px',
-          minWidth: position.minWidth + 'px',
-          maxHeight: position.maxHeight + 'px',
-        },
+        style: anchorMenu
+          ? undefined
+          : {
+            top: position.top === undefined ? undefined : position.top + 'px',
+            bottom: position.bottom === undefined ? undefined : position.bottom + 'px',
+            right: position.right + 'px',
+            minWidth: position.minWidth + 'px',
+            maxHeight: position.maxHeight + 'px',
+          },
         onKeyDown: onMenuKeyDown,
       }, options.map(function (option, optionIndex) {
         return h('div', {
@@ -6368,8 +6404,8 @@ __def('components', function (exports, require, React) {
    * panels instead of claiming a row of its own.
    *
    * Contract props: status, repo, busy, operation, onRefresh, onOpenPush,
-   * pushDisabledReason, aiMode, aiBusy, aiNotice, onToggleAiMode, onReclassify,
-   * onCopy(value), onSetRemote, t.
+   * pushDisabledReason, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
+   * onChangeGrouping(value), onReclassify, onCopy(value), onSetRemote, t.
    * Bulk staging (stage-all / unstage-all) lives in the FileNav header as the
    * tri-state select-all, where it shares the row/group checkbox model.
    */
@@ -6512,25 +6548,33 @@ __def('components', function (exports, require, React) {
     var pushReason = props.pushDisabledReason || (busy ? t('reason.busy') : null);
     var pushTitle = pushDisabled ? disabledTitle(t, pushReason) : t('actions.push');
 
-    var canToggleAi = typeof props.onToggleAiMode === 'function';
-    /* The button names the grouping a click switches to, not the current one:
-     * while AI grouping is active the sidebar is already grouped by AI, so the
-     * label flips to "Git status" (the pressed state still marks AI as active).
+    var canSelectGrouping = typeof props.onChangeGrouping === 'function';
+    /* Three-way grouping selector (Git status / AI role / AI logic) built on the
+     * shared Select so it looks like a DSH menu: a compact trigger with the
+     * active label and a chevron, and a listbox that checks the active option.
+     * Option titles explain each mode and become the menu row tooltips.
      * Progress is reported in exactly one place: the slim AI status row below
-     * the toolbar. Turning grouping off is allowed while a request is running
-     * (the host aborts it); only a Git write blocks the button. */
-    var aiButtonLabel = aiMode ? t('nav.gitGroups') : t('nav.aiGroups');
-    var aiButton = h(Button, {
-      size: 'sm',
-      className: cx('gr-btn-ai', aiMode && 'gr-btn-toggled'),
-      title: aiButtonLabel,
-      ariaLabel: aiButtonLabel,
-      active: aiMode,
-      disabled: busy || !canToggleAi ? true : undefined,
-      onClick: props.onToggleAiMode,
-      leading: h(IconSpark, { size: ICON_SIZE.md }),
-      t: t,
-    }, h('span', { className: 'gr-btn-label' }, aiButtonLabel));
+     * the toolbar. Switching grouping off is allowed while a classify request is
+     * running (the host aborts it); only a Git write blocks the control. */
+    var groupingMode = !aiMode ? 'git' : (props.aiGrouping === 'logic' ? 'logic' : 'role');
+    var groupingOptions = [
+      { value: 'git', label: t('nav.gitGroups'), title: t('nav.gitGroupsHint') },
+      { value: 'role', label: t('nav.aiGroupsRole'), title: t('nav.aiGroupsRoleHint') },
+      { value: 'logic', label: t('nav.aiGroupsLogic'), title: t('nav.aiGroupsLogicHint') },
+    ];
+    var groupingSelect = canSelectGrouping
+      ? h(Select, {
+        className: 'gr-topbar-grouping',
+        anchorMenu: true,
+        value: groupingMode,
+        options: groupingOptions,
+        ariaLabel: t('nav.grouping'),
+        disabled: busy ? true : undefined,
+        onChange: function (value) {
+          if (value !== groupingMode) props.onChangeGrouping(value);
+        },
+      })
+      : null;
 
     var aiRow = aiBusy || aiNotice
       ? h('div', {
@@ -6568,7 +6612,7 @@ __def('components', function (exports, require, React) {
           worktreeTag),
         h('div', { className: 'gr-topbar-mid' }, summaryMarks, aiRow),
         h('div', { className: 'gr-topbar-actions', 'role': 'toolbar', 'aria-label': t('a11y.actions') },
-          aiButton,
+          groupingSelect,
           aiMode ? h(IconButton, {
             label: t('nav.reclassify'),
             onClick: props.onReclassify,
@@ -6868,8 +6912,16 @@ __def('components', function (exports, require, React) {
       var groupId = groupIdOf(group, index);
       var entries = groupEntries(group);
       var collapsed = isCollapsed(props.collapsedGroups, groupId);
-      var label = String(group.label || group.title || group.name || t('nav.other'));
-      var description = group.description || group.hint || null;
+      /* The Host may mark a category as `kind: 'non-functional'` (logic mode:
+       * config / build / CI / docs only). Its machine name is not user-facing:
+       * localize the heading and fall back to the descriptive tooltip when the
+       * model omitted a description. The group checkbox keeps working because
+       * the entries are ordinary rows. */
+      var nonFunctional = group.kind === 'non-functional';
+      var label = nonFunctional
+        ? t('nav.nonFunctional')
+        : String(group.label || group.title || group.name || t('nav.other'));
+      var description = group.description || group.hint || (nonFunctional ? t('nav.nonFunctionalHint') : null);
       var bodyId = 'gr-group-' + safeId(groupId) + '-' + index;
       /* Group checkbox mirrors the rows: everything counted as committable is
        * staged -> checked, nothing -> unchecked, otherwise the mixed state.
@@ -8150,6 +8202,7 @@ __def('components', function (exports, require, React) {
             title: t('ai.settingsTitle'),
             description: t('ai.settingsDescription'),
           },
+            h(Hint, null, t('ai.settingsSwitchHint')),
             h('details', { className: 'gr-settings-note' },
               h('summary', { className: 'gr-settings-note-summary' },
                 h('span', { className: 'gr-settings-note-chevron', 'aria-hidden': 'true' },
@@ -8799,11 +8852,16 @@ __def('app', function (exports, require, React) {
         if (path) paths.push(String(path));
       }
       if (paths.length === 0) continue;
-      groups.push({
+      var pathGroup = {
         name: String(category.name || ''),
         description: category.description ? String(category.description) : '',
         paths: paths,
-      });
+      };
+      /* Logic mode marks the "nothing that changes runtime behaviour" bucket
+       * with a stable kind; the navigation localizes it instead of showing the
+       * machine name (`NON_FUNCTIONAL`). */
+      if (category.kind === 'non-functional') pathGroup.kind = 'non-functional';
+      groups.push(pathGroup);
     }
     return groups.length > 0 ? groups : null;
   }
@@ -8896,6 +8954,7 @@ __def('app', function (exports, require, React) {
   function pickSettingsValue(value) {
     var result = {
       aiClassify: value && value.aiClassify === true,
+      aiGrouping: value && value.aiGrouping === 'logic' ? 'logic' : 'role',
       preclassify: value && value.preclassify === true,
       maxCandidates: value && Number.isFinite(value.maxCandidates) ? value.maxCandidates : 50,
     };
@@ -8917,6 +8976,7 @@ __def('app', function (exports, require, React) {
       : (activeLocale === 'en' ? 'en' : 'zh');
     var settings = {
       aiClassify: value.aiClassify === true,
+      aiGrouping: value.aiGrouping === 'logic' ? 'logic' : 'role',
       preclassify: value.preclassify === true,
       maxCandidates: value.maxCandidates,
       locale: locale,
@@ -8972,12 +9032,13 @@ __def('app', function (exports, require, React) {
     if (!rpc) return Promise.resolve();
     state.settingsStore.set(function (current) {
       var nextValue = {};
-      var keys = ['aiClassify', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
+      var keys = ['aiClassify', 'aiGrouping', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
       for (var index = 0; index < keys.length; index += 1) {
         if (current.value && current.value[keys[index]] !== undefined) nextValue[keys[index]] = current.value[keys[index]];
       }
       if (patch) {
         if ('aiClassify' in patch) nextValue.aiClassify = patch.aiClassify === true;
+        if ('aiGrouping' in patch) nextValue.aiGrouping = patch.aiGrouping === 'logic' ? 'logic' : 'role';
         if ('preclassify' in patch) nextValue.preclassify = patch.preclassify === true;
         if ('maxCandidates' in patch) nextValue.maxCandidates = patch.maxCandidates;
         if ('provider' in patch) {
@@ -9036,6 +9097,18 @@ __def('app', function (exports, require, React) {
       }
       throw error;
     });
+  }
+
+  /**
+   * Settings patch for one grouping selector option. Git status only turns AI
+   * grouping off (the persisted AI mode survives); the two AI options turn it
+   * on and persist their mode, so the toolbar selection survives a restart and
+   * the classifier receives the same mode the navigation shows.
+   */
+  function groupingSettingsPatch(mode) {
+    if (mode === 'role') return { aiClassify: true, aiGrouping: 'role' };
+    if (mode === 'logic') return { aiClassify: true, aiGrouping: 'logic' };
+    return { aiClassify: false };
   }
 
   // ---------------------------------------------------------------------------
@@ -9117,6 +9190,9 @@ __def('app', function (exports, require, React) {
     var target = props.target || { sessionId: null, cwd: null, label: '' };
     var sessionId = target && target.sessionId ? target.sessionId : null;
     var aiEnabled = settingsSnapshot.value.aiClassify === true;
+    /* Persisted AI grouping mode; only meaningful while AI grouping is on. The
+     * classifier and the navigation must always agree on it. */
+    var aiGrouping = settingsSnapshot.value.aiGrouping === 'logic' ? 'logic' : 'role';
 
     var snapshotRef = useRef(null);
     snapshotRef.current = snapshot;
@@ -9130,6 +9206,10 @@ __def('app', function (exports, require, React) {
     var navScrollRef = useRef(null);
     var workspaceRef = useRef(null);
     var aiRequestRef = useRef({ id: null, signature: null, controller: null, timer: null });
+    /* Live mode for async replies: a classify response must be checked against
+     * the mode that is active now, not only the one captured when it started. */
+    var aiGroupingRef = useRef(aiGrouping);
+    aiGroupingRef.current = aiGrouping;
     var remoteStateRef = useRef(remoteState);
     remoteStateRef.current = remoteState;
     var tRef = useRef(t);
@@ -9510,6 +9590,9 @@ __def('app', function (exports, require, React) {
           id: 'ai:' + String(category.name),
           label: String(category.name),
           description: category.description || '',
+          /* Forward the Host's category kind: FileNav localizes the
+           * non-functional bucket (`NON_FUNCTIONAL`) for logic grouping. */
+          kind: category.kind === 'non-functional' ? 'non-functional' : '',
           tone: 'ai',
           entries: list,
         });
@@ -9536,7 +9619,7 @@ __def('app', function (exports, require, React) {
           return String(entry.path).toLowerCase().indexOf(needle) !== -1 ||
             (entry.oldPath && String(entry.oldPath).toLowerCase().indexOf(needle) !== -1);
         });
-        if (list.length > 0) result.push({ id: group.id, label: group.label, tone: group.tone, entries: list, description: group.description });
+        if (list.length > 0) result.push({ id: group.id, label: group.label, tone: group.tone, entries: list, description: group.description, kind: group.kind });
       }
       return result;
     }, [groups, search]);
@@ -9662,6 +9745,9 @@ __def('app', function (exports, require, React) {
       cancelAiRequest();
       var generation = targetGenerationRef.current;
       var requestId = util.uid('classify');
+      /* Snapshot the mode: the reply is only valid for the mode it was
+       * requested in. The host applies the same explicit mode. */
+      var requestedGrouping = aiGroupingRef.current;
       var controller = new AbortController();
       /* Only entry keys are sent: the host re-reads every piece of metadata and
        * the excerpts from the real repository state. Keep the key→path table of
@@ -9679,12 +9765,21 @@ __def('app', function (exports, require, React) {
       setAiState(function (currentState) {
         return { signature: currentState.signature, result: currentState.result, pathGroups: currentState.pathGroups, loading: true, error: null, notice: null, model: currentState.model };
       });
-      var params = { requestId: requestId, entries: payloadEntries };
+      var params = { requestId: requestId, entries: payloadEntries, grouping: requestedGrouping };
       if (sessionId) params.sessionId = sessionId;
       if (force) params.force = true;
       rpc.call('classify', params, { signal: controller.signal }).then(function (value) {
         if (generation !== targetGenerationRef.current) return;
         if (aiRequestRef.current.id !== requestId || controller.signal.aborted) return;
+        /* A reply only describes the grouping mode it was requested for. When
+         * the user switched modes while it streamed, painting it would mix two
+         * different groupings on screen: drop it (the mode-change effect below
+         * already cancelled the request and reset the display). */
+        var activeGrouping = aiGroupingRef.current;
+        var responseGrouping = value && (value.grouping === 'role' || value.grouping === 'logic')
+          ? value.grouping
+          : requestedGrouping;
+        if (requestedGrouping !== activeGrouping || responseGrouping !== activeGrouping) return;
         var latest = snapshotRef.current;
         if (!latest || !latest.repo || latest.repo.root !== (value && value.repo ? value.repo.root : null)) {
           cancelAiRequest();
@@ -9732,6 +9827,26 @@ __def('app', function (exports, require, React) {
       });
     }, [cancelAiRequest, entriesSignature, sessionId]);
 
+    /* Role and logic grouping produce different categories, so switching the
+     * mode invalidates everything the previous mode produced: cancel the
+     * in-flight request and drop the rendered result / notice instead of
+     * painting categories from two modes. The auto-request effect below re-runs
+     * (its deps include aiGrouping) and debounces a fresh request with the new
+     * mode. */
+    var previousGroupingRef = useRef(aiGrouping);
+    useEffect(function () {
+      if (!aiEnabled) {
+        /* The persisted mode may change while AI grouping is off; remember it
+         * so enabling AI with that mode does not look like a mode switch. */
+        previousGroupingRef.current = aiGrouping;
+        return;
+      }
+      if (previousGroupingRef.current === aiGrouping) return;
+      previousGroupingRef.current = aiGrouping;
+      cancelAiRequest();
+      setAiState({ signature: null, result: null, pathGroups: null, loading: false, error: null, notice: null, model: null });
+    }, [aiEnabled, aiGrouping, cancelAiRequest]);
+
     // Turning AI grouping off, or switching repository, drops any pending result.
     useEffect(function () {
       if (!aiEnabled) {
@@ -9774,7 +9889,7 @@ __def('app', function (exports, require, React) {
         }
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [aiEnabled, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);
+    }, [aiEnabled, aiGrouping, open, repoRoot, entriesSignature, entries.length, aiState.signature, aiState.result]);
 
     useEffect(function () {
       return function () {
@@ -10529,18 +10644,13 @@ __def('app', function (exports, require, React) {
       onOpenPush: openPush,
       pushDisabledReason: pushDisabledReason,
       aiMode: aiEnabled,
+      aiGrouping: aiGrouping,
       aiBusy: aiState.loading,
       aiNotice: aiNotice,
-      onToggleAiMode: function () {
-        saveSettings({ aiClassify: !aiEnabled }).catch(function () {});
+      onChangeGrouping: function (value) {
+        saveSettings(groupingSettingsPatch(value)).catch(function () {});
       },
       onReclassify: function () {
-        if (!aiEnabled) {
-          saveSettings({ aiClassify: true }).then(function () {
-            requestAi({ force: true });
-          }).catch(function () {});
-          return;
-        }
         requestAi({ force: true });
       },
       onShowShortcuts: function () { setShortcutHelp(true); },
@@ -11229,6 +11339,7 @@ __def('app', function (exports, require, React) {
   exports.groupIdForEntry = groupIdForEntry;
   exports.aiEntriesSignature = aiEntriesSignature;
   exports.aiPathGroups = aiPathGroups;
+  exports.groupingSettingsPatch = groupingSettingsPatch;
   exports.clampWindowSize = clampWindowSize;
   exports.clampWindowRect = clampWindowRect;
   exports.dragWindowRect = dragWindowRect;

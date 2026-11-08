@@ -484,8 +484,8 @@ __def('components', function (exports, require, React) {
    * panels instead of claiming a row of its own.
    *
    * Contract props: status, repo, busy, operation, onRefresh, onOpenPush,
-   * pushDisabledReason, aiMode, aiBusy, aiNotice, onToggleAiMode, onReclassify,
-   * onCopy(value), onSetRemote, t.
+   * pushDisabledReason, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
+   * onChangeGrouping(value), onReclassify, onCopy(value), onSetRemote, t.
    * Bulk staging (stage-all / unstage-all) lives in the FileNav header as the
    * tri-state select-all, where it shares the row/group checkbox model.
    */
@@ -628,25 +628,33 @@ __def('components', function (exports, require, React) {
     var pushReason = props.pushDisabledReason || (busy ? t('reason.busy') : null);
     var pushTitle = pushDisabled ? disabledTitle(t, pushReason) : t('actions.push');
 
-    var canToggleAi = typeof props.onToggleAiMode === 'function';
-    /* The button names the grouping a click switches to, not the current one:
-     * while AI grouping is active the sidebar is already grouped by AI, so the
-     * label flips to "Git status" (the pressed state still marks AI as active).
+    var canSelectGrouping = typeof props.onChangeGrouping === 'function';
+    /* Three-way grouping selector (Git status / AI role / AI logic) built on the
+     * shared Select so it looks like a DSH menu: a compact trigger with the
+     * active label and a chevron, and a listbox that checks the active option.
+     * Option titles explain each mode and become the menu row tooltips.
      * Progress is reported in exactly one place: the slim AI status row below
-     * the toolbar. Turning grouping off is allowed while a request is running
-     * (the host aborts it); only a Git write blocks the button. */
-    var aiButtonLabel = aiMode ? t('nav.gitGroups') : t('nav.aiGroups');
-    var aiButton = h(Button, {
-      size: 'sm',
-      className: cx('gr-btn-ai', aiMode && 'gr-btn-toggled'),
-      title: aiButtonLabel,
-      ariaLabel: aiButtonLabel,
-      active: aiMode,
-      disabled: busy || !canToggleAi ? true : undefined,
-      onClick: props.onToggleAiMode,
-      leading: h(IconSpark, { size: ICON_SIZE.md }),
-      t: t,
-    }, h('span', { className: 'gr-btn-label' }, aiButtonLabel));
+     * the toolbar. Switching grouping off is allowed while a classify request is
+     * running (the host aborts it); only a Git write blocks the control. */
+    var groupingMode = !aiMode ? 'git' : (props.aiGrouping === 'logic' ? 'logic' : 'role');
+    var groupingOptions = [
+      { value: 'git', label: t('nav.gitGroups'), title: t('nav.gitGroupsHint') },
+      { value: 'role', label: t('nav.aiGroupsRole'), title: t('nav.aiGroupsRoleHint') },
+      { value: 'logic', label: t('nav.aiGroupsLogic'), title: t('nav.aiGroupsLogicHint') },
+    ];
+    var groupingSelect = canSelectGrouping
+      ? h(Select, {
+        className: 'gr-topbar-grouping',
+        anchorMenu: true,
+        value: groupingMode,
+        options: groupingOptions,
+        ariaLabel: t('nav.grouping'),
+        disabled: busy ? true : undefined,
+        onChange: function (value) {
+          if (value !== groupingMode) props.onChangeGrouping(value);
+        },
+      })
+      : null;
 
     var aiRow = aiBusy || aiNotice
       ? h('div', {
@@ -684,7 +692,7 @@ __def('components', function (exports, require, React) {
           worktreeTag),
         h('div', { className: 'gr-topbar-mid' }, summaryMarks, aiRow),
         h('div', { className: 'gr-topbar-actions', 'role': 'toolbar', 'aria-label': t('a11y.actions') },
-          aiButton,
+          groupingSelect,
           aiMode ? h(IconButton, {
             label: t('nav.reclassify'),
             onClick: props.onReclassify,
@@ -984,8 +992,16 @@ __def('components', function (exports, require, React) {
       var groupId = groupIdOf(group, index);
       var entries = groupEntries(group);
       var collapsed = isCollapsed(props.collapsedGroups, groupId);
-      var label = String(group.label || group.title || group.name || t('nav.other'));
-      var description = group.description || group.hint || null;
+      /* The Host may mark a category as `kind: 'non-functional'` (logic mode:
+       * config / build / CI / docs only). Its machine name is not user-facing:
+       * localize the heading and fall back to the descriptive tooltip when the
+       * model omitted a description. The group checkbox keeps working because
+       * the entries are ordinary rows. */
+      var nonFunctional = group.kind === 'non-functional';
+      var label = nonFunctional
+        ? t('nav.nonFunctional')
+        : String(group.label || group.title || group.name || t('nav.other'));
+      var description = group.description || group.hint || (nonFunctional ? t('nav.nonFunctionalHint') : null);
       var bodyId = 'gr-group-' + safeId(groupId) + '-' + index;
       /* Group checkbox mirrors the rows: everything counted as committable is
        * staged -> checked, nothing -> unchecked, otherwise the mixed state.
@@ -2266,6 +2282,7 @@ __def('components', function (exports, require, React) {
             title: t('ai.settingsTitle'),
             description: t('ai.settingsDescription'),
           },
+            h(Hint, null, t('ai.settingsSwitchHint')),
             h('details', { className: 'gr-settings-note' },
               h('summary', { className: 'gr-settings-note-summary' },
                 h('span', { className: 'gr-settings-note-chevron', 'aria-hidden': 'true' },
