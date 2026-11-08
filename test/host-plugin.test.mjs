@@ -4,6 +4,7 @@
  * classification validation — all against throwaway repositories.
  */
 import { execFile } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -165,7 +166,9 @@ async function seedRepository() {
 }
 
 before(async () => {
-  workspace = await mkdtemp(join(tmpdir(), 'code-review-host-'));
+  // tmpdir() can return a Windows 8.3 short path (e.g. C:\Users\RUNNER~1 on CI
+  // runners) while git reports the canonical long path, so pin one form.
+  workspace = realpathSync.native(await mkdtemp(join(tmpdir(), 'code-review-host-')));
   repoDir = join(workspace, 'repo');
   home = join(workspace, 'home');
   await mkdir(home, { recursive: true });
