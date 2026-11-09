@@ -26,7 +26,7 @@ import { ORDER, buildClient, BuildError, stripComments } from './build.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Package id shown beside the localized plugin name in DSH (manifest gate enforces it). */
-const PKG_NAME = 'dsh-code-review';
+const PKG_NAME = '@acanzaima/dsh-code-review';
 
 /** The `.`-export and package layout fixed by docs/protocol.md §1/package.json spec. */
 const EXPECTED_EXPORTS = {
@@ -134,7 +134,7 @@ function gateManifest() {
 
   assert(typeof pkg.name === 'string' && pkg.name.trim() !== '', 'package.json: "name" is missing');
   assert(typeof pkg.version === 'string' && /^\d+\.\d+\.\d+(?:[-+].+)?$/.test(pkg.version), 'package.json: "version" is missing or not semver-like');
-  assert(pkg.name === 'dsh-code-review', `package.json: "name" must be "dsh-code-review" (bundle id and Cordis row id depend on it); found ${JSON.stringify(pkg.name)}`);
+  assert(pkg.name === PKG_NAME, `package.json: "name" must be "${PKG_NAME}" (bundle id and Cordis row id depend on it); found ${JSON.stringify(pkg.name)}`);
   assert(pkg.type === 'module', 'package.json: "type" must be "module"');
   assert(pkg.license === 'MIT', 'package.json: "license" must be "MIT"');
   assert(pkg.main === './index.js', 'package.json: "main" must be "./index.js"');

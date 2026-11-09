@@ -6,7 +6,7 @@
 
 插件由两半组成，分别运行在不同进程：
 
-- **Host 半**：Cordis 插件，运行在 DSH Host 的 Node 运行时中。ESM，Node.js ≥ 20.11，零运行时依赖，只使用 Node 内置模块。它注册一条 `POST /api/code-review` Fetch 路由，负责仓库解析、Git 操作、设置持久化和可选的 AI 归类。
+- **Host 半**：Cordis 插件，运行在 DSH Host 的 Node 运行时中。ESM，Node.js ≥ 20.11，零运行时依赖，只使用 Node 内置模块。它注册一条 `POST /api/code-review` Fetch 路由，负责仓库解析、Git 操作、设置持久化，以及可选的 AI 归类与提交信息草拟。
 - **Client 半**：一个由源码拼接生成的浏览器产物 `client.js`，由 DSH 的客户端模块加载器在页面加载时注册。React 由宿主的模块表提供，产物中不打包框架代码。它负责插槽 UI、diff 渲染、键盘交互和 RPC 调用。
 
 整包针对 DSH 0.2.2-rc.1（`@deepseek-ai/dsh`）开发并验证（早期版本针对 0.2.1-rc.5 编写），只支持 DSH Web UI。
@@ -15,8 +15,8 @@
 
 - **真实 Git 状态**：所有仓库读取都调用本机 `git` CLI；界面展示的永远是最近一次读取到的 Git 输出，不做前端推测。
 - **先校验后写入**：每个写操作在真正执行前重新读取仓库、重新计算内容指纹，与客户端出示的预期不一致就中止。
-- **最小协议面**：Host 与 Client 之间只有 17 个方法与一组封闭的数据形状，边界集中在一处可审计。
-- **AI 只做导航**：可选的 AI 归类只改变左侧文件列表的分组方式，不触碰 Git 状态、比较基准或操作范围。
+- **最小协议面**：Host 与 Client 之间只有 19 个方法与一组封闭的数据形状，边界集中在一处可审计。
+- **AI 只做辅助**：AI 归类只改变左侧文件列表的分组方式，不触碰 Git 状态、比较基准或操作范围；AI 生成提交信息只把草稿写进可编辑的提交信息框，不提交、不暂存、不改变任何仓库状态。
 - **零依赖、确定性构建**：没有依赖安装步骤；`client.js` 的构建输出逐字节确定，产物提交进仓库并随包发布。
 
 ## 2. 进程与参与者
@@ -61,12 +61,12 @@ flowchart LR
 | `src/host/index.js` | Cordis 入口与组合根；方法表、方法分发、路由、仓库解析、写串行化、Git 操作接线、空闲预归类调度 | `apply(ctx)` 通过 `ctx.inject(['connection'])` 注册路由，并监听 `api-session/status` 在会话空闲时按需预热归类缓存；所有写方法经同一条 Promise 链串行化 |
 | `src/host/protocol.js` | 协议原语：错误类型、`{ ok, value }` / `{ ok, error }` 封套、JSON 响应，以及把不可信请求参数规范化为安全值 | 参数读取只接受协议允许的类型与范围，越界即抛协议错误 |
 | `src/host/models.js` | 模型目录与归类路由解析：列出 DSH 可用模型、计算 `effectiveModel` / `sessionModel` / `selectedModel` 标签 | 只缓存 provider/model 发现结果（60 秒），会话模型每次请求重新解析 |
-| `src/host/ai.js` | 归类能力：两种系统提示词（按职能 / 按功能逻辑）、用户附加要求、输入负载裁剪、`llm.stream` 调用、回复解析与校验 | 模型只能返回输入中出现过的 id；未知 id 丢弃，未归类条目进入「其他变更」；逻辑模式的保留分类名 `NON_FUNCTIONAL` 被标记为 `kind: "non-functional"` |
-| `src/host/git.js` | Git 调用引擎：仓库解析、状态、单文件 diff、文件/变更块级写操作、提交、推送预览与推送、远程配置 | 只经 Executor 以 argv 数组调用 `git`；写前用指纹校验；每个读写结果都来自新的 Git 调用；`setRemote` 只写本地配置、不访问网络 |
+| `src/host/ai.js` | AI 能力：归类（两种系统提示词、用户附加要求、输入负载裁剪、回复解析与校验）与提交信息草拟（提示词、暂存 patch / 历史格式负载、纯文本回复整理）；两者共用 `llm.stream` 调用与错误映射 | 归类时模型只能返回输入中出现过的 id，未知 id 丢弃、未归类条目进入「其他变更」，逻辑模式的保留分类名 `NON_FUNCTIONAL` 被标记为 `kind: "non-functional"`；草拟只返回纯文本，不写 Git 状态 |
+| `src/host/git.js` | Git 调用引擎：仓库解析、状态、单文件 diff、文件/变更块级写操作、提交、推送预览与推送、远程配置、提交信息输入（最近提交 + 暂存 patch） | 只经 Executor 以 argv 数组调用 `git`；写前用指纹校验；每个读写结果都来自新的 Git 调用；`setRemote` 只写本地配置、不访问网络；提交信息输入只读且只取已暂存内容 |
 | `src/host/patch.js` | 统一 diff 的解析与单 hunk patch 构造/匹配；未跟踪文件的合成补丁 | 解析与重建按原始字节进行，CRLF、缺失行尾等边界不丢失 |
 | `src/host/settings.js` | 插件私有设置的持久化：读取、合并、规范化，写入采用临时文件 + rename 原子替换 | 位于 `~/.dsh/code-review/settings.json`（可用 `DSH_HOME` 覆盖 DSH 主目录） |
 
-包根 `index.js` 只做转出：`export { apply } from './src/host/index.js'`。`cordis.patch.yml` 向 profile 的 Loader 组合插入一行 `id: dsh-code-review` 的插件行；`package.json` 的 `dsh` 块声明 bundle patch 与客户端注入信息。
+包根 `index.js` 只做转出：`export { apply } from './src/host/index.js'`。`cordis.patch.yml` 向 profile 的 Loader 组合插入一行插件行（`id: dsh-code-review`，`name: @acanzaima/dsh-code-review`）；`package.json` 的 `dsh` 块声明 bundle patch 与客户端注入信息。
 
 ## 4. Client 模块职责
 
@@ -81,7 +81,7 @@ flowchart LR
 | `src/client/open-in-app.js` | 复用 DSH 的 open-in-app：目录应用目录与启动请求，以及 `remote.session` 的打开 / 显示位置调用 | 不自己起进程；`remote.session` 通过可选 `ctx.get` 获取，不可用时只隐藏文件级动作 |
 | `src/client/diff.js` | 纯 diff 模型：并排行构建、折叠区、语法高亮、变更锚点与导航 | 无 React、无 DOM，可在 Node 中直接测试 |
 | `src/client/diff-view.js` | `DiffPane` 渲染器：虚拟化滚动、行号、横向独立滚动、minimap、紧凑变更计数（完整文案在 tooltip 与屏幕阅读器文本中）、变更块菜单 | 消费 `diff.js` 的模型，不重新计算 diff |
-| `src/client/components.js` | 组合组件：TopBar（分支信息菜单 + 变更摘要）、StatusBar（常驻底栏）、FileNav（含提交勾选框与标题行三态全选）、菜单/对话框、提交抽屉、推送对话框、窗口内设置（基础元素来自 `ui.js`） | 对话框接受 `scoped` 模式：`scoped` 时只覆盖所在窗口并只在窗口内捕获焦点，未指定时沿用整页对话框行为；不做请求；状态与回调由 `app.js` 传入 |
+| `src/client/components.js` | 组合组件：TopBar（分支信息菜单 + 变更摘要）、StatusBar（常驻底栏）、FileNav（含提交勾选框与标题行三态全选）、菜单/对话框、提交抽屉（含 AI 草稿按钮）、推送对话框、窗口内设置（基础元素来自 `ui.js`） | 对话框接受 `scoped` 模式：`scoped` 时只覆盖所在窗口并只在窗口内捕获焦点，未指定时沿用整页对话框行为；不做请求；状态与回调由 `app.js` 传入 |
 | `src/client/app.js` | 窗口层与窗口状态机、窗口外壳（拖动 / 缩放 / 最小化 / 最大化）、视口几何钳制、按窗口作用域的键盘交互与窗口内对话框、请求编排、插槽注册与 `apply(ctx)` | 暴露 `apply` 与 `inject: ['slots']`；是唯一注册插槽的模块；键盘监听挂在窗口根 DOM 节点而不是 `document` |
 
 客户端源码的拼接顺序固定为 `util → i18n → state → rpc → open-in-app → diff → diff-view → styles → ui → components → app`，`app` 必须是最后一个。规则与理由见 [protocol.md](./protocol.md) 第 2 节与 [development.md](./development.md) 第 5 节。
@@ -147,6 +147,14 @@ sequenceDiagram
 4. 回复被解析为分类结构，并对照真实条目集合校验：未知 id 丢弃，未归类条目进入「其他变更」；逻辑模式下名为 `NON_FUNCTIONAL` 的分类被标记为 `kind: "non-functional"`，客户端把它本地化为「非功能变更」并保留模型给的一句话说明作为 tooltip。
 5. 客户端把回复里的 entry key 经发送时记录的 key→path 表转换成路径分类（`aiPathGroups`），导航再按路径把当前条目映射进组（`aiGroups`）；同一文件在 staged / unstaged 之间切换后 key 变了、path 不变，因此仍留在原组，不会掉进「其他变更」。切换 AI 模式会取消进行中的请求并丢弃旧模式的回复，然后按新模式重新请求。失败时回退为按 Git 状态分组。结果按「仓库 + 模型 + 分组模式 + 条目指纹」缓存于 Host 内存。
 
+### 5.4 AI 生成提交信息
+
+1. 用户在展开的提交区点击 sparkles 图标按钮。按钮只在「有已暂存条目、无未解决冲突、列表未被截断」时可用（与提交按钮的阻止原因一致，但不要求提交信息非空）。
+2. 客户端只发送 `{ requestId, sessionId? }` 调用 `commitMessage`；Host 重新读取状态、取已暂存条目，并在同一次请求里只读地取两份输入：`git diff --cached`（有界 patch）与 `git log`（最近 20 条提交的 subject / 正文摘录）。
+3. Host 用与 AI 归类相同的有效模型路由与推理档位调用一次 `llm.stream`（温度 0、45 秒超时、可取消）。提示词优先沿用仓库历史提交格式；没有历史或看不出稳定格式时使用 Conventional Commits `type(scope): 摘要`，多个独立细节用 `- ` 列表写在标题下。
+4. 回复按纯文本整理（去代码块围栏、去“提交信息：”之类前缀、规范空行、≤ 4000 字符），返回 `{ message, model, history, repo }`；客户端把 `message` 写进可编辑的提交信息框，由用户确认后手动提交。
+5. 任何失败都只返回错误封套，不写 Git 状态、不改动已暂存内容；折叠提交区、关闭窗口或再次生成会取消请求（`commitMessageCancel`）。该动作与 AI 归类互相独立，不依赖 `aiClassify` 开关。
+
 ## 6. 写安全不变量
 
 | 不变量 | 实现 |
@@ -193,7 +201,7 @@ sequenceDiagram
 - **不保存密钥**：插件没有 API key 字段，模型调用通过 DSH 的 `llm` 服务完成；设置文件只存行为配置（语言、模型选择、条目上限、附加归类要求）。
 - **本地执行**：Git 操作调用本机 `git` CLI；插件本身不发起网络请求，唯一的模型网络访问由 DSH 的 `llm` 服务代理。
 - **进程调用安全**：没有 shell、没有字符串插值、没有 `process.chdir`；路径作为独立 argv 传入并启用字面量 pathspec 模式。
-- **数据最小化**：AI 归类只发送项目线索、条目元数据和有界摘录；凭据类路径不发送内容，`docs/ai-grouping.md` 列出完整清单。
+- **数据最小化**：AI 归类只发送项目线索、条目元数据和有界摘录；凭据类路径不发送内容（清单见 `docs/ai-grouping.md`）。AI 生成提交信息只在用户显式点击时运行，发送已暂存 patch 与最近提交的格式参考（清单见 `docs/ai-commit-message.md`），不点击就不发送。
 - **错误不泄露实现**：所有异常被映射为协议错误封套；已知错误的 `message` 是稳定英文诊断，未预期异常只记录到日志并返回固定的 `Internal error`；窗口文案由客户端按 `error.code` 本地化。
 
 ## 10. 设计取舍与已知限制
@@ -211,4 +219,5 @@ sequenceDiagram
 - **关窗始终手动**：切换会话 / 工作区、滚动或操作窗口后面的页面都不会自动关闭窗口，窗口只能通过标题栏的关闭按钮关闭。
 - **写链只约束本插件**：外部工具可在操作之间改动仓库，所以每次写都重新校验，而不是依赖队列。
 - **AI 默认关闭、两种视角同源**：默认按 Git 状态分组，不选择 AI 模式时插件不会向模型发送任何数据；「按职能」与「按功能逻辑」共用同一份有界输入和同一份缓存键（额外包含分组模式），功能逻辑分类不读取文件内容，因此仍属于导航辅助而不是代码理解；归类失败总是回退到 Git 状态分组。
+- **提交信息草稿是显式动作**：不点击提交区的 AI 按钮就不会发送任何代码内容；草稿只填入可编辑的提交信息框，不自动提交。由于 patch 必然包含已暂存内容的真实文本，涉密仓库需要自行决定是否使用。
 - **验证方式**：协议、Git 引擎与打包行为有自动化测试覆盖；窗口的视觉与交互在真实 DSH Web GUI 中人工验证。当前验证环境为 Windows + Git for Windows，其他平台未单独验证。

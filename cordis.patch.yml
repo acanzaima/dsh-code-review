@@ -1,4 +1,4 @@
 - insert:
     - id: dsh-code-review
-      name: 'dsh-code-review'
+      name: '@acanzaima/dsh-code-review'
       config: {}

@@ -1,0 +1,72 @@
+name: Publish
+
+# A tag push from the local machine (`git push origin v0.2.0`) and a tag created
+# on the GitHub web UI (Tags -> New tag, or a Release whose tag does not exist
+# yet) both produce a `push` event for the tag ref, so one trigger covers both.
+# The workflow file must already be on the tagged commit.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Publishing only needs to read the repository. Provenance (`--provenance`) is
+# not enabled for the first release: it would also need `id-token: write` here
+# (the package.json `repository` field is already set). Add it once the token
+# flow is proven, or switch to npm Trusted Publishing later.
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Auto-created on first use; add required reviewers here later if releases
+    # should need a manual approval before publishing.
+    environment: npm-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify the tag matches package.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $expected; bump the version and retag"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches package.json"
+
+      # Fail fast (and cheaply) before the full validate/test/build pipeline runs.
+      - name: Check npm credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami
+
+      # scripts/release.mjs is the single release entry point: validate -> test ->
+      # build -> pack -> auth -> version -> publish. `--tag next` keeps
+      # pre-release versions off the `latest` dist-tag.
+      - name: Publish
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$version" == *-* ]]; then
+            npm run release -- --tag next
+          else
+            npm run release
+          fi

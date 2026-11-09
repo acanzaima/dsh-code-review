@@ -1065,6 +1065,57 @@ test('commit: changed head or staged fingerprint -> commit/stale with no commit'
 });
 
 // ---------------------------------------------------------------------------
+// commit-message inputs (history style + staged prompt patch)
+// ---------------------------------------------------------------------------
+
+test('commitHistory: recent subjects and bounded bodies, empty before the first commit', async (t) => {
+  const f = createFixture(t, 'msg-history');
+  f.init();
+  const git = newGit();
+  let repo = await git.resolveRepo(f.dir);
+  // A repository without history must not make the draft path fail.
+  assert.deepEqual(await git.commitHistory(repo), { commits: [] });
+
+  f.write('a.txt', 'a\n');
+  f.addAll();
+  f.commit('feat: 初始提交\n\n- 第一项细节\n- 第二项细节');
+  f.write('a.txt', 'b\n');
+  f.addAll();
+  f.commit('fix(core): 修复边界\n\n第二段正文');
+  repo = await git.resolveRepo(f.dir);
+
+  const history = await git.commitHistory(repo);
+  assert.equal(history.commits.length, 2);
+  // Newest first, exactly as git log reports them.
+  assert.equal(history.commits[0].subject, 'fix(core): 修复边界');
+  assert.match(history.commits[0].body, /第二段正文/);
+  assert.equal(history.commits[1].subject, 'feat: 初始提交');
+  assert.match(history.commits[1].body, /第一项细节/);
+  // The limit is honoured.
+  const limited = await git.commitHistory(repo, { limit: 1 });
+  assert.equal(limited.commits.length, 1);
+});
+
+test('stagedPatch: only the index is included, worktree content is not', async (t) => {
+  const { f, git, repo } = await committedFixture(t, 'msg-patch', { 'a.txt': 'one\n', 'b.txt': 'x\n' });
+  f.write('a.txt', 'one\ntwo\n');
+  f.git(['add', '--', 'a.txt']);
+  f.write('b.txt', 'x\nworktree-only\n');
+
+  const patch = await git.stagedPatch(repo);
+  assert.equal(patch.truncated, false);
+  assert.match(patch.text, /\+two/);
+  assert.match(patch.text, /^diff --git a\/a\.txt/m);
+  assert.equal(patch.text.includes('b.txt'), false, 'unstaged content must never reach the draft prompt');
+  assert.equal(patch.text.includes('worktree-only'), false);
+
+  // The prompt budget clips the patch and reports it instead of silently hiding it.
+  const tiny = await git.stagedPatch(repo, { maxChars: 20 });
+  assert.equal(tiny.truncated, true);
+  assert.equal(tiny.text.length, 20);
+});
+
+// ---------------------------------------------------------------------------
 // push
 // ---------------------------------------------------------------------------
 

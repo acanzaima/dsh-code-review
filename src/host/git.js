@@ -29,6 +29,8 @@ export const CAPS = Object.freeze({
   maxDiffLines: MAX_SIDE_LINES, // side with more lines -> truncated text
   maxStderr: 16 * 1024, // stdout/stderr copied into GitError.details
   maxPushCommits: 200, // push preview commit list
+  maxCommitMessagePatch: 24 * 1024, // staged patch chars sent as commit-message input
+  maxHistoryCommits: 20, // recent commits used only as a writing-style reference
   maxOutputBytes: 64 * 1024 * 1024, // one git invocation may not collect more stdout+stderr than this
   timeoutMs: 120_000, // one git invocation may not run longer than this
 });
@@ -1449,6 +1451,54 @@ export function createGit(exec) {
     };
   }
 
+  // --- commit message inputs -------------------------------------------------
+
+  /**
+   * Recent commit messages, used **only** as a writing-style reference for the
+   * AI commit-message draft: the most recent subjects plus a bounded body
+   * excerpt. Read-only; returns no commits for a repository without history
+   * (or when history cannot be read). Never shown in the panel.
+   */
+  async function commitHistory(repo, { limit = CAPS.maxHistoryCommits } = {}) {
+    const root = repo && typeof repo.root === 'string' ? repo.root : null;
+    if (!root) return { commits: [] };
+    const requested = Number.isInteger(limit) && limit > 0 ? Math.min(limit, CAPS.maxHistoryCommits) : CAPS.maxHistoryCommits;
+    // RS (\x1e) terminates each commit so multi-line bodies survive parsing.
+    const result = await invoke(['log', `--max-count=${requested}`, '--no-color', '--format=%s%n%b%x1e'], { cwd: root });
+    if (result.code !== 0) return { commits: [] };
+    const commits = [];
+    for (const record of result.stdout.toString('utf8').split('\u001e')) {
+      const text = record.replace(/^\n+/, '').replace(/\s+$/, '');
+      if (text.length === 0) continue;
+      const newline = text.indexOf('\n');
+      const subject = (newline === -1 ? text : text.slice(0, newline)).trim();
+      if (subject.length === 0) continue;
+      const body = newline === -1 ? '' : text.slice(newline + 1).trim();
+      commits.push({
+        subject: subject.slice(0, 200),
+        ...(body.length > 0 ? { body: body.slice(0, 600) } : {}),
+      });
+    }
+    return { commits };
+  }
+
+  /**
+   * The staged patch (`HEAD` -> index) handed to the commit-message prompt.
+   * Bounded by `maxChars` so a huge staged diff cannot blow up the request;
+   * binary files appear as git's "Binary files differ" placeholder, never as
+   * content. The bound is a prompt budget, not a display cap.
+   */
+  async function stagedPatch(repo, { maxChars = CAPS.maxCommitMessagePatch } = {}) {
+    const root = repo && typeof repo.root === 'string' ? repo.root : null;
+    if (!root) return { text: '', truncated: false };
+    const result = await invoke(['diff', '--cached', '--no-abbrev', '--no-color', '--unified=3', '--find-renames'], { cwd: root });
+    if (result.code !== 0) throw gitFailure('git diff --cached failed', ['diff', '--cached'], result, 'repo/error');
+    const text = result.stdout.toString('utf8');
+    const budget = Number.isInteger(maxChars) && maxChars > 0 ? maxChars : CAPS.maxCommitMessagePatch;
+    if (text.length <= budget) return { text, truncated: false };
+    return { text: text.slice(0, budget), truncated: true };
+  }
+
   // --- push -----------------------------------------------------------------
 
   async function readUpstreamConfig(root, branch) {
@@ -1638,6 +1688,8 @@ export function createGit(exec) {
     unstageHunk,
     discardHunk,
     commit,
+    commitHistory,
+    stagedPatch,
     pushPreview,
     push,
     setRemote,

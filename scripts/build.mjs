@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 /**
  * scripts/build.mjs — zero-dependency client bundle builder.
  *
@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 export const ORDER = ['util', 'i18n', 'state', 'rpc', 'open-in-app', 'diff', 'diff-view', 'styles', 'ui', 'components', 'app'];
 
 /** DSH client bundle id; must match package.json name. */
-export const BUNDLE_ID = 'dsh-code-review';
+export const BUNDLE_ID = '@acanzaima/dsh-code-review';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLIENT_DIR = path.join(ROOT, 'src', 'client');
@@ -50,7 +50,7 @@ window.__ModuleLoader__.load({
     }
     function __req(name) {
       const mod = __mods[name];
-      if (!mod) throw new Error('dsh-code-review client: unknown module ' + name);
+      if (!mod) throw new Error('${BUNDLE_ID} client: unknown module ' + name);
       if (!mod.exports) {
         mod.exports = {};
         mod.fn(mod.exports, __req, React);

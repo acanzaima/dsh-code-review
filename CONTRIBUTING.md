@@ -101,9 +101,15 @@ npm run check       # 发布门禁 + 完整测试（= npm run validate -- --with
 
 ## 发布（维护者）
 
-发布由维护者执行，流水线依次为：校验 → 测试 → 构建 → 打包 → 认证 → 版本检查 → `npm publish`。
-先跑 `npm run release -- --dry-run` 确认，再执行 `npm run release`；发布前更新
-[CHANGELOG.md](CHANGELOG.md) 与 `package.json` 的版本号。
+发布由维护者执行，流水线依次为：校验 → 测试 → 构建 → 打包 → 认证 → 版本检查 → `npm publish`
+（npm 包为 scoped 公共包 `@acanzaima/dsh-code-review`）。
+
+- **自动发布（默认）**：更新 [CHANGELOG.md](CHANGELOG.md) 与 `package.json` 的版本号并提交到
+  `main` 后，创建并推送 `v<version>` tag（本地 `git tag v0.2.0 && git push origin v0.2.0`，
+  或在 GitHub 页面创建同名 tag）。`.github/workflows/publish.yml` 会校验 tag 与版本一致并执行
+  完整发布流水线；`0.x.y-rc.n` 这类预发布版本自动发到 `next` dist-tag 而不是 `latest`。
+- **本地发布**：先跑 `npm run release -- --dry-run` 确认，再执行 `npm run release`。两种方式共用
+  同一脚本；同一版本不能重复发布。
 
 所有参与者请遵守 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。安全问题请按 [SECURITY.md](SECURITY.md)
 私下报告，不要开公开 issue。项目使用 MIT 许可证，见 [LICENSE](LICENSE)。

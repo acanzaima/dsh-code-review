@@ -40,6 +40,9 @@ import { createSettingsStore } from './settings.js';
 const ROUTE_PATH = '/api/code-review';
 const MAX_CLASSIFY_ENTRIES = 400;
 const CLASSIFY_TIMEOUT_MS = 45_000;
+const COMMIT_MESSAGE_TIMEOUT_MS = 45_000;
+/** Prompt budget for the staged patch sent when drafting a commit message. */
+const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const EXCERPT_LIMIT = 20;
 const EXCERPT_BYTES = 2 * 1024;
 const CLASSIFY_CACHE_LIMIT = 4;
@@ -283,6 +286,8 @@ export function createHostPlugin(ctx) {
   /** @type {Map<string, { signature: string, result: object }>} */
   const classifyCache = new Map();
   const classifyControllers = new Map();
+  /** In-flight commit-message drafts, cancellable per request id (read-only op). */
+  const messageControllers = new Map();
 
   function classifySignature(repo, entries, model, reasoningEffort, grouping) {
     const hash = createHash('sha256');
@@ -673,6 +678,73 @@ export function createHostPlugin(ctx) {
       if (controller === undefined) return { cancelled: false };
       controller.abort(new Error('cancelled by user'));
       classifyControllers.delete(requestId);
+      return { cancelled: true };
+    },
+
+    /* Draft one commit message for the current staged change set. Read-only:
+     * the staged patch and a bounded slice of recent commit messages are the
+     * model input, and the reply is plain text returned to the editable field —
+     * nothing here writes Git state. The effective model is the same one AI
+     * grouping uses (explicit plugin choice → session model → DSH default). */
+    async commitMessage(params) {
+      const context = await contextFor(params);
+      const repo = requireWritableRepo(context);
+      const staged = (Array.isArray(context.status.entries) ? context.status.entries : [])
+        .filter((entry) => entry.status === 'staged');
+      if (staged.length === 0) throw new ProtocolError('message/no-staged', 'nothing is staged to describe');
+      const requestId = typeof params?.requestId === 'string' && params.requestId.length > 0 ? params.requestId : 'commit-message';
+      const controller = new AbortController();
+      messageControllers.get(requestId)?.abort();
+      messageControllers.set(requestId, controller);
+      const timeout = setTimeout(() => controller.abort(new Error('commit message timeout')), COMMIT_MESSAGE_TIMEOUT_MS);
+      timeout.unref?.();
+      try {
+        const current = await settings.read();
+        const requestedRoute = modelCatalog.classifyRouteFromSettings(current);
+        const route = requestedRoute
+          ?? classifier.sessionRoute(params?.sessionId)
+          ?? classifier.defaultRoute();
+        const [patch, history] = await Promise.all([
+          git.stagedPatch(repo, { maxChars: MAX_COMMIT_MESSAGE_DIFF_CHARS }),
+          git.commitHistory(repo),
+        ]);
+        const result = await classifier.writeCommitMessage({
+          project: await projectHints(repo.root),
+          entries: staged.map((entry) => ({
+            path: entry.path,
+            oldPath: entry.oldPath,
+            change: entry.change,
+            additions: entry.additions,
+            deletions: entry.deletions,
+          })),
+          patch: patch.text,
+          patchTruncated: patch.truncated,
+          history: history.commits,
+          signal: controller.signal,
+          route: route ?? undefined,
+          reasoningEffort: typeof current.reasoningEffort === 'string' && current.reasoningEffort.length > 0
+            ? current.reasoningEffort
+            : undefined,
+        });
+        return {
+          requestId,
+          message: result.message,
+          model: result.model,
+          history: history.commits.length,
+          repo,
+        };
+      } finally {
+        clearTimeout(timeout);
+        if (messageControllers.get(requestId) === controller) messageControllers.delete(requestId);
+      }
+    },
+
+    async commitMessageCancel(params) {
+      const requestId = typeof params?.requestId === 'string' ? params.requestId : '';
+      const controller = messageControllers.get(requestId);
+      if (controller === undefined) return { cancelled: false };
+      controller.abort(new Error('cancelled by user'));
+      messageControllers.delete(requestId);
       return { cancelled: true };
     },
 

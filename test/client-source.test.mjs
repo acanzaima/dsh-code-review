@@ -217,6 +217,10 @@ test('describeError maps every documented protocol code to localized zh/en text'
     'ai/invalid',
     'ai/unavailable',
     'ai/aborted',
+    'message/no-staged',
+    'message/unavailable',
+    'message/invalid',
+    'message/aborted',
     'settings/invalid',
   ];
   const zh = i18n.createI18n('zh');
@@ -772,18 +776,20 @@ test('settings disclosure retains the full data, operation and fallback explanat
   assert.match(stylesSource, /\.gr-settings-note\[open\] \.gr-settings-note-chevron \{ transform: rotate\(90deg\)/);
 });
 
-test('commit drawer collapses to a header and commits from a textarea', () => {
+test('commit drawer collapses to a header, drafts and commits from guarded actions', () => {
   const runtime = createClientRuntime();
   const components = runtime.require('components');
   const ui = runtime.require('ui');
   const t = runtime.require('i18n').createI18n('en').t;
   let commits = 0;
   let toggles = 0;
+  let drafts = 0;
   const base = {
     t, message: 'msg', count: 2,
     reasons: [t('commit.messageRequired')],
     onCommit: () => { commits += 1; },
     onToggle: () => { toggles += 1; },
+    onGenerate: () => { drafts += 1; },
   };
 
   // Collapsed by default: only the header row (title, count, toggle) is there.
@@ -800,20 +806,52 @@ test('commit drawer collapses to a header and commits from a textarea', () => {
   toggle.props.onClick();
   assert.equal(toggles, 1);
 
-  // Expanded: a multi-line textarea (not a single-line field) plus the guarded action.
-  for (const [canCommit, busy] of [[true, false], [false, false], [true, true]]) {
-    const tree = components.CommitPanel(Object.assign({}, base, { open: true, canCommit, busy }));
+  // Expanded: a multi-line textarea (not a single-line field) plus two guarded
+  // actions — the AI draft and the commit button. There is no keyboard commit:
+  // the old Ctrl/Cmd+Enter binding was removed on purpose.
+  for (const [canCommit, busy, canGenerate, generateBusy] of [
+    [true, false, true, false],
+    [false, false, false, false],
+    [true, true, true, true],
+  ]) {
+    const tree = components.CommitPanel(Object.assign({}, base, { open: true, canCommit, busy, canGenerate, generateBusy }));
     const elements = collectElements(tree);
     const field = elements.find((element) => element.type === ui.Textarea
       && element.props.ariaLabel === t('a11y.commitMessage'));
     assert.ok(field, 'the commit message field is a textarea');
     assert.equal(field.props.rows, 3, 'the message box is multi-line');
-    field.props.onKeyDown({ ctrlKey: true, key: 'Enter', preventDefault() {} });
+    assert.equal(field.props.onKeyDown, undefined, 'the message box binds no keyboard commit shortcut');
     const action = elements.find((element) => element.type === ui.Button && element.props.variant === 'primary');
     assert.ok(action, 'the commit action is rendered');
-    assert.equal(ui.Button(action.props).props.disabled, !canCommit || busy ? true : undefined);
+    assert.equal(ui.Button(action.props).props.disabled, !canCommit || generateBusy ? true : undefined);
+    const draft = elements.find((element) => element.type === ui.IconButton && element.props.label === t('commit.generate'));
+    assert.ok(draft, 'the AI draft action is rendered');
+    assert.equal(draft.props.busy, generateBusy);
+    assert.equal(ui.IconButton(draft.props).props.disabled, !canGenerate || busy ? true : undefined);
+    // The tooltip is only the action name — no long explanation, no reason list.
+    assert.equal(draft.props.title, undefined, 'the panel passes no long tooltip');
+    const draftButton = ui.IconButton(draft.props);
+    assert.equal(draftButton.props.title, t('commit.generate'), 'the tooltip is the action name');
+    assert.equal(draftButton.props['aria-label'], t('commit.generate'));
+    // The draft action precedes the commit action inside the action row.
+    const row = elements.find((element) => element.props.className === 'gr-commit-actions');
+    assert.ok(row, 'the actions are grouped');
+    const children = (row.props.children || []).filter(Boolean);
+    assert.equal(children[0].type, ui.IconButton);
+    assert.equal(children[1].type, ui.Button);
   }
-  assert.equal(commits, 1, 'Ctrl/Cmd+Enter cannot bypass disabled or busy state');
+
+  // Each action only fires its own callback.
+  const expanded = components.CommitPanel(Object.assign({}, base, { open: true, canCommit: true, canGenerate: true }));
+  const expandedElements = collectElements(expanded);
+  const draft = expandedElements.find((element) => element.type === ui.IconButton && element.props.label === t('commit.generate'));
+  draft.props.onClick();
+  assert.equal(drafts, 1, 'the draft action calls onGenerate');
+  assert.equal(commits, 0, 'drafting never commits');
+  const action = expandedElements.find((element) => element.type === ui.Button && element.props.variant === 'primary');
+  action.props.onClick();
+  assert.equal(commits, 1, 'the commit action still commits');
+  assert.equal(drafts, 1, 'committing never drafts');
 });
 
 /* ------------------------------------------------------------------------- */
@@ -1624,18 +1662,27 @@ test('shortcut help advertises the real bindings and modal layers own the keyboa
   for (const locale of ['zh', 'en']) {
     const t = i18n.createI18n(locale).t;
     for (const key of ['shortcut.navRows', 'shortcut.fileEdges', 'shortcut.switchFiles',
-      'shortcut.contextMenu', 'shortcut.commit', 'shortcut.helpToggle']) {
+      'shortcut.contextMenu', 'shortcut.helpToggle']) {
       assert.notEqual(t(key), key, `${locale}: missing ${key}`);
     }
   }
   // The dialog lists the bindings that actually exist, once each.
   for (const key of ['shortcut.navRows', 'shortcut.fileEdges', 'shortcut.switchFiles',
-    'shortcut.prevChange', 'shortcut.hunkMenu', 'shortcut.contextMenu', 'shortcut.commit',
+    'shortcut.prevChange', 'shortcut.hunkMenu', 'shortcut.contextMenu',
     'shortcut.refresh', 'shortcut.helpToggle', 'shortcut.close']) {
     assert.ok(appSource.includes(`'${key}'`), `app shortcuts list is missing ${key}`);
   }
   assert.equal(appSource.includes("'shortcut.nextFile'"), false, 'duplicate file rows are gone');
   assert.equal(appSource.includes("'shortcut.hunks'"), false, 'duplicate hunk row is gone');
+  // The Ctrl/Cmd+Enter commit shortcut was removed: no dictionary entry, no
+  // advertised row, no message-box key handler and no keycap hint.
+  for (const locale of ['zh', 'en']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(i18n.DICTIONARIES[locale], 'shortcut.commit'), false,
+      `${locale}: the removed commit shortcut must not stay in the dictionary`);
+  }
+  assert.equal(appSource.includes('shortcut.commit'), false, 'the commit shortcut is no longer advertised');
+  assert.equal(componentsSource.includes('shortcut.commit'), false);
+  assert.equal(componentsSource.includes('gr-commit-shortcut'), false, 'the keycap hint is gone');
   // While a modal layer owns the keyboard, only Esc (and ? for this help) act.
   assert.match(appSource, /if \(shortcutHelp\) \{/);
   assert.match(appSource, /if \(menu \|\| confirm \|\| pushState\.open \|\| panelSettingsOpen\) return;/);
@@ -3179,6 +3226,37 @@ test('the commit action has a fixed label and the count lives in the drawer head
       assert.ok(collectText(toggle).includes(t('commit.checkedFiles', { n: String(count) })),
         `${locale}/${count}: the header row still shows how many files will be committed`);
     }
+  }
+});
+
+test('AI commit message drafting is an explicit, cancellable read-only request', () => {
+  const runtime = createClientRuntime();
+  const i18n = runtime.require('i18n');
+
+  // One read-only protocol call; the Host re-reads the staged set itself, so the
+  // client never uploads its snapshot as the model input.
+  assert.match(appSource, /rpc\.call\('commitMessage', params, \{ signal: controller\.signal \}\)/);
+  assert.match(appSource, /var params = \{ requestId: requestId \};/);
+  assert.equal(appSource.includes('params.entries'), false, 'the draft request must not carry entry metadata');
+  // Cancelling the browser fetch alone would leave the Host streaming, so the
+  // request id is cancelled explicitly on replace / collapse / unmount.
+  assert.match(appSource, /rpc\.call\('commitMessageCancel', \{ requestId: requestId \}\)/);
+  assert.match(appSource, /cancelCommitGeneration\(\);/);
+  // A successful draft lands in the editable message field; it never commits.
+  assert.match(appSource, /setCommitMessage\(message\);/);
+
+  // Every user-facing string exists in both dictionaries.
+  for (const locale of ['zh', 'en']) {
+    const t = i18n.createI18n(locale).t;
+    for (const key of ['commit.generate', 'commit.generating',
+      'error.messageNoStaged', 'error.messageUnavailable', 'error.messageInvalid', 'error.messageAborted']) {
+      assert.notEqual(t(key), key, `${locale}: missing ${key}`);
+    }
+  }
+  const zh = i18n.createI18n('zh').t;
+  const en = i18n.createI18n('en').t;
+  for (const key of ['commit.generate', 'error.messageUnavailable', 'error.messageInvalid']) {
+    assert.notEqual(zh(key), en(key), `${key} must be localized, not shared verbatim`);
   }
 });
 

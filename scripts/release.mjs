@@ -9,7 +9,7 @@
  *   4. pack      npm pack --dry-run --json, then assert the tarball is exactly the allowlist
  *   5. dry run   stop here when --dry-run or RELEASE_DRY_RUN=1
  *   6. auth      npm whoami
- *   7. version   npm view dsh-code-review version (first publish allowed)
+ *   7. version   npm view <name> version (first publish allowed)
  *   8. publish   npm publish --access public
  *
  * Usage:
@@ -108,7 +108,7 @@ async function main(argv) {
   const { dryRun, tag, passthrough } = parseArguments(argv);
   const pkg = loadPackage();
 
-  console.log(`dsh-code-review release pipeline — ${pkg.name}@${pkg.version}${dryRun ? ' (dry run)' : ''}`);
+  console.log(`${pkg.name} release pipeline — ${pkg.name}@${pkg.version}${dryRun ? ' (dry run)' : ''}`);
 
   // 1. validate -----------------------------------------------------------
   step(1, 'validate', 'manifest, package layout, client sources/bundle, host imports, locales, icon, secrets');

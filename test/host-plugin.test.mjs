@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseClassification } from '../src/host/ai.js';
+import { buildCommitMessagePayload, parseClassification, parseCommitMessage } from '../src/host/ai.js';
 
 const run = promisify(execFile);
 
@@ -1441,6 +1441,137 @@ describe('settings and AI grouping', () => {
         patch: { preclassify: false, aiClassify: false, provider: null, model: null, aiGrouping: 'role' },
       });
     }
+  });
+});
+
+describe('commit message draft', () => {
+  test('needs staged content and never calls the model otherwise', async () => {
+    await git(['reset', '-q']);
+    const status = (await plugin.dispatch('status', { cwd: repoDir })).value;
+    assert.equal(status.summary.staged, 0, 'expected an empty index for this case');
+    const callsBefore = llmCalls;
+    const rejected = await plugin.dispatch('commitMessage', { cwd: repoDir, requestId: 'msg-empty' });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, 'message/no-staged');
+    assert.equal(llmCalls, callsBefore, 'no model call without staged content');
+  });
+
+  test('drafts from the staged patch and the repository history only', async () => {
+    await git(['reset', '-q']);
+    const unstagedMarker = `unstaged-marker-${Date.now()}`;
+    const before = (await plugin.dispatch('status', { cwd: repoDir })).value;
+    const headBefore = before.repo.headSha;
+    await writeFile(join(repoDir, 'app.js'), 'const value = "draft marker";\nconsole.log(value);\n', 'utf8');
+    await git(['add', '--', 'app.js']);
+    await writeFile(join(repoDir, 'README.md'), `# demo\n\n${unstagedMarker}\n`, 'utf8');
+    try {
+      llmReply = '```\nfeat(review): 根据暂存改动生成提交信息\n\n- 新增 AI 草稿按钮\n- 沿用仓库历史格式\n```';
+      llmRequest = null;
+      const result = await plugin.dispatch('commitMessage', { cwd: repoDir, requestId: 'msg-ok' });
+      assert.equal(result.ok, true, JSON.stringify(result.error));
+      assert.equal(result.value.message, 'feat(review): 根据暂存改动生成提交信息\n\n- 新增 AI 草稿按钮\n- 沿用仓库历史格式');
+      assert.equal(result.value.model, 'fake/fake-model');
+      assert.equal(result.value.requestId, 'msg-ok');
+      assert.ok(result.value.history >= 1, 'recent commits are used as the style reference');
+      assert.equal(result.value.repo.root, before.repo.root);
+
+      // The model input is the staged patch + bounded history; worktree-only
+      // content and the full repository are never sent.
+      const payload = lastPrompt();
+      assert.ok(payload.staged.files.some((file) => file.path === 'app.js'));
+      assert.match(payload.diff.text, /\+const value = "draft marker"/);
+      assert.equal(payload.diff.text.includes(unstagedMarker), false, 'unstaged worktree content must not be sent');
+      assert.ok(payload.history.count >= 1);
+      assert.ok(payload.history.commits.every((commit) => typeof commit.subject === 'string' && commit.subject.length > 0));
+      assert.match(llmRequest.system, /提交信息/);
+      assert.equal(llmRequest.reasoningEffort, 'off');
+
+      // Read-only: the index and HEAD are untouched.
+      const after = (await plugin.dispatch('status', { cwd: repoDir })).value;
+      assert.equal(after.summary.staged, 1);
+      assert.equal(after.repo.headSha, headBefore);
+    } finally {
+      await git(['reset', '-q']);
+    }
+  });
+
+  test('reports unusable replies and model failures with message/* codes', async () => {
+    await git(['reset', '-q']);
+    await writeFile(join(repoDir, 'app.js'), 'const value = "failure case";\nconsole.log(value);\n', 'utf8');
+    await git(['add', '--', 'app.js']);
+    try {
+      llmReply = '';
+      llmFinish = null;
+      const empty = await plugin.dispatch('commitMessage', { cwd: repoDir, requestId: 'msg-empty-reply' });
+      assert.equal(empty.ok, false);
+      assert.equal(empty.error.code, 'message/invalid');
+      assert.equal(empty.error.details.reason, 'empty-reply');
+
+      llmReply = 'feat: cut';
+      llmFinish = 'max-tokens';
+      const cut = await plugin.dispatch('commitMessage', { cwd: repoDir, requestId: 'msg-max-tokens' });
+      assert.equal(cut.ok, false);
+      assert.equal(cut.error.code, 'message/invalid');
+      assert.equal(cut.error.details.reason, 'max-tokens');
+
+      llmFinish = null;
+      llmThrow = { mode: 'async', error: Object.assign(new Error('boom at C:\\secret\\path'), { code: 'RATE_LIMIT' }) };
+      const failed = await plugin.dispatch('commitMessage', { cwd: repoDir, requestId: 'msg-unavailable' });
+      assert.equal(failed.ok, false);
+      assert.equal(failed.error.code, 'message/unavailable');
+      assert.equal(failed.error.details.reason, 'RATE_LIMIT');
+      assert.equal(failed.error.message.includes('boom'), false, 'raw error text must not leak');
+    } finally {
+      llmReply = null;
+      llmFinish = null;
+      llmThrow = null;
+      await git(['reset', '-q']);
+    }
+  });
+
+  test('cancellation is scoped to an in-flight request id', async () => {
+    const missing = await plugin.dispatch('commitMessageCancel', { requestId: 'not-in-flight' });
+    assert.equal(missing.ok, true);
+    assert.deepEqual(missing.value, { cancelled: false });
+  });
+
+  test('parseCommitMessage unwraps replies into plain commit text', () => {
+    assert.equal(parseCommitMessage('```\nfeat: x\n\n- a\n```'), 'feat: x\n\n- a');
+    assert.equal(parseCommitMessage('提交信息：\r\nfix: y\r\n\r\n\r\n- b\r\n'), 'fix: y\n\n- b');
+    assert.equal(parseCommitMessage('  plain subject  \n'), 'plain subject');
+    assert.throws(
+      () => parseCommitMessage(''),
+      (error) => error.code === 'message/invalid' && error.details.reason === 'empty-reply',
+    );
+    assert.throws(
+      () => parseCommitMessage('```\n```'),
+      (error) => error.code === 'message/invalid' && error.details.reason === 'not-message',
+    );
+  });
+
+  test('buildCommitMessagePayload describes history style and marks a clipped patch', () => {
+    const payload = buildCommitMessagePayload({
+      project: { name: 'demo', topLevel: ['src'], manifests: ['package.json'] },
+      entries: [{ path: 'a.js', change: 'modified', additions: 2, deletions: 1 }],
+      patch: 'x'.repeat(30_000),
+      history: [{ subject: 'feat(a): 一' }, { subject: 'fix: 二' }, { subject: '支持中文标题' }],
+    });
+    assert.equal(payload.staged.count, 1);
+    assert.deepEqual(payload.staged.files[0], { path: 'a.js', change: 'modified', added: 2, removed: 1 });
+    assert.equal(payload.diff.truncated, true);
+    assert.match(payload.diff.text, /patch 已截断/);
+    assert.equal(payload.history.count, 3);
+    assert.equal(payload.history.conventional, true);
+    assert.ok(payload.history.commits.every((commit) => typeof commit.subject === 'string'));
+
+    const empty = buildCommitMessagePayload({ patch: '', history: [] });
+    assert.equal(empty.diff.truncated, false);
+    assert.equal(empty.history.count, 0);
+    assert.equal(empty.history.conventional, false);
+    // A git-layer truncation is preserved even for a short patch.
+    const clipped = buildCommitMessagePayload({ patch: 'diff --git a/x b/x', patchTruncated: true });
+    assert.equal(clipped.diff.truncated, true);
+    assert.match(clipped.diff.text, /patch 已截断/);
   });
 });
 

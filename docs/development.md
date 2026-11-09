@@ -41,8 +41,8 @@ Host 半（ESM，Node builtins）：
 | `src/host/index.js` | Cordis 入口、组合根、方法表与分发、仓库解析、写串行化、路由注册、空闲预归类调度 |
 | `src/host/protocol.js` | 错误类型、响应封套、请求参数读取与规范化 |
 | `src/host/models.js` | 模型目录、归类路由解析与显示标签 |
-| `src/host/ai.js` | 两种归类提示词（按职能 / 按功能逻辑）、负载构造、`llm.stream` 调用、回复解析（含 `NON_FUNCTIONAL` → `kind` 映射） |
-| `src/host/git.js` | Git 调用引擎、状态 / diff / 写操作 / 提交 / 推送 / 远程配置 |
+| `src/host/ai.js` | 归类提示词（按职能 / 按功能逻辑）与提交信息提示词、负载构造、`llm.stream` 调用、回复解析（含 `NON_FUNCTIONAL` → `kind` 映射与提交信息纯文本整理） |
+| `src/host/git.js` | Git 调用引擎、状态 / diff / 写操作 / 提交 / 推送 / 远程配置、提交信息输入（最近提交 + 暂存 patch） |
 | `src/host/patch.js` | 统一 diff 解析与单 hunk 补丁构造 |
 | `src/host/settings.js` | 设置持久化（原子写） |
 
@@ -82,7 +82,7 @@ Client 半（普通脚本，由 `scripts/build.mjs` 按固定顺序拼接）：`
 - 键盘监听挂在窗口根 DOM 节点上，而不是 `document`：快捷键只作用于当前聚焦的窗口，`Esc` 只关闭该窗口内最上层的对话框 / 菜单，不关闭窗口本身；DSH 页面其它区域的键盘操作不受影响。多个窗口同时存在时，焦点决定哪个窗口接收快捷键。
 - 可聚焦控件的焦点环必须和宿主一致：统一用 `--dsw-focus-ring-color`（回退 `--dsw-alias-state-business-primary`）和 `--dsw-focus-ring-width`，不要再用 `--dsw-alias-brand-primary` 实色；也不要给焦点规则加 `!important`——DSH 在 `html[data-input-modality=pointer]` 下会把焦点环变透明，`!important` 会让插件在鼠标操作后仍留着外环（`gr-focus-silent` 是唯一例外，只用于 Esc 归还焦点）。入口按钮不要内联 `outline: none`，否则插件自己的 `:focus-visible` 规则无法生效。
 - 分栏拖拽由 `app.js` 按工作区实测宽度钳制（`MIN_NAV_WIDTH` / `MIN_DIFF_WIDTH`），CSS 再用 `.gr-nav-column { max-width: calc(100% - 246px) }` 兜底；拖动线的颜色用 `--dsw-alias-label-primary` 混色，不要直接用 `--dsw-alias-brand-primary` 实色（浅色主题下接近纯黑，会显得突兀）。
-- 提交区是可折叠抽屉（默认收起）：标题行显示将提交文件数与展开开关，展开后是多行提交信息文本框 + 提交按钮；没有旧的「本次将提交的内容」暂存预览列表，文件导航的文件行与分组标题勾选框（分组为半选态）承担该职责，勾选即暂存并复用 `stage` / `unstage` 协议的指纹校验。设置页继续组合 `SettingSection` / `SettingRow` / `Hint`，长说明使用原生 `details` / `summary`；共享对话框焦点循环包含 `summary`，收起的内容由可见性过滤排除。
+- 提交区是可折叠抽屉（默认收起）：标题行显示将提交文件数与展开开关，展开后是多行提交信息文本框 + 提交按钮；没有旧的「本次将提交的内容」暂存预览列表，文件导航的文件行与分组标题勾选框（分组为半选态）承担该职责，勾选即暂存并复用 `stage` / `unstage` 协议的指纹校验。提交按钮**左侧**是「AI 生成提交信息」图标按钮（`IconButton` + `IconSpark`；生成中显示 spinner，并禁用提交信息框与提交按钮），它只把草稿写进可编辑的提交信息框，不提交；提交信息框**不绑定任何提交快捷键**（旧的 `Ctrl` / `Cmd` + `Enter` 已移除），提交只通过按钮。设置页继续组合 `SettingSection` / `SettingRow` / `Hint`，长说明使用原生 `details` / `summary`；共享对话框焦点循环包含 `summary`，收起的内容由可见性过滤排除。
 - 静态样式全部写在 `src/client/styles.js` 的字符串常量里，类名统一使用 `gr-` 前缀，避免与页面样式冲突。
 - 颜色只引用主题变量（例如 `--dsw-alias-label-primary`、`--dsw-alias-bg-base`、`--dsw-alias-brand-primary`）；需要透明度或混色时用 `color-mix()` 从 token 派生，不要写字面色值。
 - 样式表通过 `components.js` 的 `Styles` 组件挂到 `shell.overlay` 的常驻条目上，因此没有任何窗口、只剩输入框按钮时它仍然生效。
@@ -103,8 +103,8 @@ Client 半（普通脚本，由 `scripts/build.mjs` 按固定顺序拼接）：`
 
 | 文件 | 覆盖范围 |
 | --- | --- |
-| `test/git-core.test.mjs` | Git 引擎：状态、diff、部分暂存 / 还原、提交、推送（含本地 bare 远端）、远程配置（add / set-url）、无首次提交、重命名、冲突、特殊路径、二进制 / 符号链接 / 子模块 / 仅模式变化、stale 指纹、CRLF、截断、worktree |
-| `test/host-plugin.test.mjs` | Host 协议：`dispatch` / 路由、设置读写、会话与仓库解析、提交预期、`remoteSet` 参数校验、AI 归类参数与回复校验 |
+| `test/git-core.test.mjs` | Git 引擎：状态、diff、部分暂存 / 还原、提交、推送（含本地 bare 远端）、远程配置（add / set-url）、无首次提交、重命名、冲突、特殊路径、二进制 / 符号链接 / 子模块 / 仅模式变化、stale 指纹、CRLF、截断、worktree、提交信息输入（历史格式 / 暂存 patch） |
+| `test/host-plugin.test.mjs` | Host 协议：`dispatch` / 路由、设置读写、会话与仓库解析、提交预期、`remoteSet` 参数校验、AI 归类参数与回复校验、提交信息草稿（输入边界、`message/*` 失败码、取消） |
 | `test/diff.test.mjs` | 纯 diff 模型：插入 / 删除 / 行数不等的替换、相邻 hunk、空文件、单行文件、CRLF、CJK、对齐不变量 |
 | `test/client-bundle.test.mjs` | 产物加载：`client.js` 注册模块、工厂返回 `apply` / `inject`，并注册三个插槽条目（其中 `shell.overlay` 的窗口层条目渲染多窗口层） |
 | `test/client-source.test.mjs` | 客户端源码契约回归：窗口管理 / 几何、常驻状态栏、分支菜单与远程对话框、标题行全选、AI 路径签名、diff 保留、已移除功能守卫等 |
@@ -130,7 +130,7 @@ node --test --test-name-pattern="hunk" test/git-core.test.mjs
 | `client-source` | 客户端源码是合法普通脚本，无 ESM / JSX / `document.body` 写入 / 字面颜色 |
 | `client-build` | `client.js` 与源码构建结果逐字节一致 |
 | `host-syntax` | 每个 Host 模块能在独立 Node 进程中成功导入（捕获语法错误、坏的相对导入、顶层副作用） |
-| `locales` | `locale/en.json` 与 `locale/zh.json` 都有非空的 `meta.title` / `meta.description`，且标题带包名后缀 `(dsh-code-review)`（与 dsh-context 等插件在插件列表中的显示方式一致） |
+| `locales` | `locale/en.json` 与 `locale/zh.json` 都有非空的 `meta.title` / `meta.description`，且标题带包名后缀 `(@acanzaima/dsh-code-review)`（与 dsh-context 等插件在插件列表中的显示方式一致） |
 | `icon` | `icon.svg` 是自包含 SVG，无外部引用 / 脚本 / 图片，大小受限 |
 | `secrets` | 扫描所有将发布的文件：私钥标记、API key / token 形状、密码赋值、绝对 Windows 路径 |
 
@@ -140,7 +140,7 @@ node --test --test-name-pattern="hunk" test/git-core.test.mjs
 
 1. 改动客户端源码后先 `npm run build`；只改 Host 时无需构建。
 2. 在 DSH 插件管理器用 `install_bundle`，目标指向本插件目录（含 `package.json` 的那一层），或先 `npm pack` 再把 `.tgz` 作为目标。
-3. **升级时先移除再安装**：插件管理器会以 `already-installed` 拒绝安装已存在的包，所以先用 `remove_bundle` 移除 `dsh-code-review`，再用新目录 / 新 tarball 安装。
+3. **升级时先移除再安装**：插件管理器会以 `already-installed` 拒绝安装已存在的包，所以先用 `remove_bundle` 移除 `@acanzaima/dsh-code-review`，再用新目录 / 新 tarball / npm 包名安装。
 4. 安装后 **刷新 DSH 页面**：`client.js` 在页面加载时注册，不刷新会继续运行旧产物。Host 半在安装操作完成 recomposition 后即生效；如果 Host 变化没有生效，重启 DSH。
 5. 插件行写入当前 profile 的 `cordis.patch.yml`，`id` 为 `dsh-code-review`；同一 profile 下所有会话共享配置。
 6. Host 加载成功时日志中有 `[code-review] host half loaded; route /api/code-review`。
@@ -169,7 +169,7 @@ node --test --test-name-pattern="hunk" test/git-core.test.mjs
 7. `version`——`npm view <name> version`；首次发布允许 404，已存在同版本则中止。
 8. `publish`——`npm publish --access public`。
 
-前置条件：已 `npm login`；npm 账号拥有包名 `dsh-code-review` 或相应 scope 的发布权限；`package.json` 的 `version` 已按需更新；registry 可访问。发布前先跑 dry run：
+前置条件：已 `npm login`；npm 账号拥有包名 `@acanzaima/dsh-code-review`（scoped 包需要对该 scope 有发布权限）；`package.json` 的 `version` 已按需更新；registry 可访问。发布前先跑 dry run：
 
 ```bash
 npm run release -- --dry-run
@@ -179,11 +179,27 @@ npm run release -- --dry-run
 
 发布面由 `package.json` 的 `files` 固定：Host 源码（`src/host/`）、`client.js`、`cordis.patch.yml`、locales、`icon.svg`、README 与 LICENSE。`docs/`、`test/`、`scripts/`、`.github/` 与构建配置文件都不随包发布。
 
-README / README.en 顶部的简介图位于仓库根目录 `assets/`（`cover.zh.png` / `cover.en.png`），与 `docs/` 分开：`docs/` 只放维护者 / 集成者文档，README 素材放 `assets/`；两者都不随包发布。npm 页面渲染 README 时不会解析相对图片路径，将来发布到 npm 前若需要图片显示，应改用绝对 URL（当前包尚未发布）。
+README / README.en 顶部的简介图位于仓库根目录 `assets/`（`cover.zh.png` / `cover.en.png`），与 `docs/` 分开：`docs/` 只放维护者 / 集成者文档，README 素材放 `assets/`；两者都不随包发布。npm 页面渲染 README 时不会解析相对图片路径，这些图片在 npm 页面上不可见；需要显示时应改用绝对 URL。
+
+### 11.1 由 tag 触发的自动发布（GitHub Actions）
+
+`.github/workflows/publish.yml` 在推送 `v*` tag 时自动发布，本地 `git push origin v0.2.0` 与 GitHub 页面创建 tag（Tags → New tag，或用 Release 页面新建同名 tag）都会产生 tag push 事件，触发同一个 workflow。流程：
+
+1. 校验 tag 名与 `package.json` 的 `version` 一致（`v0.2.0` ↔ `0.2.0`），不一致直接失败。
+2. 用 `secrets.NPM_TOKEN` 执行 `npm whoami` 快速验证凭据。
+3. 调用 `npm run release`（与本地发布同一条流水线）；`0.3.0-rc.1` 这类预发布版本自动发到 `next` dist-tag 而不是 `latest`。
+
+前置条件与注意事项：
+
+- 仓库 secret `NPM_TOKEN` 必须是能发布该 scope 的 granular access token；首次发布前包还不存在，token 只能选「All packages」读写并勾选 Bypass 2FA，发布成功后再换成仅 `@acanzaima/dsh-code-review` 的 token 更安全。
+- **version 变更必须先提交**，且 workflow 文件已在被 tag 的 commit 上：先推 `package.json` 版本号提交，再创建并推送 tag。
+- 同一个版本重复发布会失败（release 的 `version` 步骤拒绝覆盖），重跑 workflow 同理；发错版本应发新的 patch 版本。
+- 仓库公开时 tag 事件不会暴露 secret 给 fork PR；如需人工审批，在仓库 Settings → Environments 给 `npm-publish` 环境加 required reviewers 即可，workflow 不需要改。
+- 该 job 只跑 `ubuntu-latest` + Node 20；测试矩阵仍由 `ci.yml` 覆盖。
 
 ## 12. CI 与编码约定
 
-`.github/workflows/ci.yml` 在推送到 `main` / `master` 和所有 Pull Request 上运行：矩阵为 `ubuntu-latest` / `windows-latest` × Node `20` / `22`（`fail-fast: false`）；因为没有依赖，工作流不执行安装步骤，依次运行 `npm test`、`npm run validate`，并在 Ubuntu + Node 20 上额外运行 `npm run pack:check`；权限只读（`contents: read`），同一分支的旧运行会被取消。新增门禁时确保 CI 调用覆盖本地发布前的同一组检查。
+`.github/workflows/ci.yml` 在推送到 `main` / `master` 和所有 Pull Request 上运行：矩阵为 `ubuntu-latest` / `windows-latest` × Node `20` / `22`（`fail-fast: false`）；因为没有依赖，工作流不执行安装步骤，依次运行 `npm test`、`npm run validate`，并在 Ubuntu + Node 20 上额外运行 `npm run pack:check`；权限只读（`contents: read`），同一分支的旧运行会被取消。新增门禁时确保 CI 调用覆盖本地发布前的同一组检查。`.github/workflows/publish.yml` 只在 `v*` tag 上运行，直接复用 `npm run release`，不在 workflow 里重复实现发布门禁。
 
 编码约定：
 

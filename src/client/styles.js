@@ -387,7 +387,7 @@ __def('styles', function (exports) {
 .gr-commit-label { color: var(--dsw-alias-label-secondary); font-size: 11.5px; }
 .gr-commit .gr-textarea { min-height: 84px; }
 .gr-commit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
-.gr-commit-shortcut { display: inline-flex; align-items: center; gap: 3px; }
+.gr-commit-actions .gr-iconbtn { width: 32px; height: 32px; }
 .gr-commit .gr-warn-box, .gr-commit .gr-error-box { margin: 0; }
 .gr-textarea { width: 100%; min-height: 92px; resize: vertical; padding: 8px 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 1.6; transition: border-color var(--ds-transition-duration-fast, 100ms) var(--ds-ease-in-out, ease); }
 .gr-textarea:hover:not(:disabled):not(:focus):not(:focus-visible) { border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }

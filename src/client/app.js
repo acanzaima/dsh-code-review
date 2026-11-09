@@ -607,6 +607,7 @@ __def('app', function (exports, require, React) {
     var [commitOpen, setCommitOpen] = useState(false);
     var [commitMessage, setCommitMessage] = useState('');
     var [commitBusy, setCommitBusy] = useState(false);
+    var [commitGenerating, setCommitGenerating] = useState(false);
     var [commitError, setCommitError] = useState(null);
     var [commitStale, setCommitStale] = useState(false);
     var [pushState, setPushState] = useState({ open: false, preview: null, loading: false, error: null, busy: false, remote: '', target: '' });
@@ -659,6 +660,8 @@ __def('app', function (exports, require, React) {
     pushStateRef.current = pushState;
     var commitBusyRef = useRef(false);
     commitBusyRef.current = commitBusy;
+    /* In-flight AI commit-message draft: { id, controller }. */
+    var commitGenerateRef = useRef({ id: null, controller: null });
     var pushBusyRef = useRef(false);
     pushBusyRef.current = !!(pushState && pushState.busy);
     var pushPreviewSeqRef = useRef(0);
@@ -1345,17 +1348,98 @@ __def('app', function (exports, require, React) {
     }, [truncated, conflictCount, stagedEntries.length, commitMessage, t]);
 
     var canCommit = !truncated && conflictCount === 0 && stagedEntries.length > 0 && commitMessage.trim().length > 0;
+    /* The AI draft action only needs staged content: the message field may be
+     * empty (that is the point) and the user can still edit the draft. Its
+     * tooltip is the action name only — no reason breakdown. */
+    var canGenerate = !truncated && conflictCount === 0 && stagedEntries.length > 0;
+
+    /* AI commit-message draft: an explicit, read-only action. Aborting the
+     * browser fetch only drops the response, so the Host request is cancelled
+     * explicitly (same contract as classifyCancel); the draft is discarded when
+     * the drawer closes, the window unmounts or a newer request replaces it. */
+    var abortCommitGeneration = useCallback(function () {
+      var ref = commitGenerateRef.current;
+      if (ref.controller) {
+        ref.controller.abort();
+        ref.controller = null;
+      }
+      var requestId = ref.id;
+      ref.id = null;
+      if (requestId && state.runtime.rpc) {
+        state.runtime.rpc.call('commitMessageCancel', { requestId: requestId }).catch(function () {});
+      }
+    }, []);
+
+    var cancelCommitGeneration = useCallback(function () {
+      abortCommitGeneration();
+      setCommitGenerating(false);
+    }, [abortCommitGeneration]);
+
+    var generateCommitMessage = useCallback(function () {
+      var rpc = state.runtime.rpc;
+      if (!rpc || commitBusyRef.current) return;
+      var current = snapshotRef.current;
+      if (!current || !current.repo) return;
+      var summary = current.summary || {};
+      var list = Array.isArray(current.entries) ? current.entries : [];
+      var stagedCount = 0;
+      for (var index = 0; index < list.length; index += 1) {
+        if (list[index] && list[index].status === 'staged') stagedCount += 1;
+      }
+      /* Re-check the same guards the button uses against the live snapshot:
+       * a reply for a change set the user already refreshed away is useless. */
+      if (summary.truncated || (summary.conflicts || 0) > 0 || stagedCount === 0) return;
+      abortCommitGeneration();
+      var generation = targetGenerationRef.current;
+      var requestId = util.uid('message');
+      var controller = new AbortController();
+      commitGenerateRef.current = { id: requestId, controller: controller };
+      setCommitGenerating(true);
+      setCommitError(null);
+      var params = { requestId: requestId };
+      if (sessionId) params.sessionId = sessionId;
+      rpc.call('commitMessage', params, { signal: controller.signal }).then(function (value) {
+        if (generation !== targetGenerationRef.current) return;
+        if (commitGenerateRef.current.id !== requestId || controller.signal.aborted) return;
+        commitGenerateRef.current = { id: null, controller: null };
+        setCommitGenerating(false);
+        var message = value && typeof value.message === 'string' ? value.message : '';
+        if (message.trim().length === 0) {
+          setCommitError({ message: tRef.current('error.messageInvalid') });
+          return;
+        }
+        setCommitMessage(message);
+        setCommitStale(false);
+      }).catch(function (error) {
+        if (generation !== targetGenerationRef.current) return;
+        if (commitGenerateRef.current.id !== requestId) return;
+        commitGenerateRef.current = { id: null, controller: null };
+        setCommitGenerating(false);
+        if (error && (error.name === 'AbortError' || error.code === 'message/aborted')) return;
+        setCommitError({ message: describeError(error, tRef.current) });
+      });
+    }, [abortCommitGeneration, sessionId]);
+
+    /* Closing the review window must not leave a token-burning request behind. */
+    useEffect(function () {
+      return function () {
+        abortCommitGeneration();
+      };
+    }, [abortCommitGeneration]);
 
     /* The drawer is collapsed by default; opening it re-reads the staged scope
      * so the commit expectation still reflects the current index. */
     var toggleCommitPanel = useCallback(function () {
       var next = !commitOpen;
       setCommitOpen(next);
-      if (!next) return;
+      if (!next) {
+        cancelCommitGeneration();
+        return;
+      }
       setCommitError(null);
       setCommitStale(false);
       refresh({ silent: true, keepSelectionOnly: true });
-    }, [commitOpen, refresh]);
+    }, [commitOpen, refresh, cancelCommitGeneration]);
 
     var submitCommit = useCallback(function () {
       if (!canCommit || commitBusy) return;
@@ -2231,10 +2315,13 @@ __def('app', function (exports, require, React) {
         count: stagedEntries.length,
         busy: commitBusy,
         canCommit: canCommit,
+        canGenerate: canGenerate,
+        generateBusy: commitGenerating,
         reasons: commitReasons,
         error: commitError,
         conflictCount: conflictCount,
         onCommit: submitCommit,
+        onGenerate: generateCommitMessage,
         staleNotice: commitStale ? t('commit.stale') : null,
       }),
       h(components.StatusBar, {
@@ -2401,7 +2488,6 @@ __def('app', function (exports, require, React) {
           { keys: [util.isMac() ? '⌘' : 'Ctrl', '←/→'], label: t('shortcut.prevChange') + ' / ' + t('shortcut.nextChange') },
           { keys: ['Enter'], label: t('shortcut.hunkMenu') },
           { keys: ['Shift', 'F10'], label: t('shortcut.contextMenu') },
-          { keys: [util.isMac() ? '⌘' : 'Ctrl', 'Enter'], label: t('shortcut.commit') },
           { keys: ['R'], label: t('shortcut.refresh') },
           { keys: ['?'], label: t('shortcut.helpToggle') },
           { keys: ['Esc'], label: t('shortcut.close') },

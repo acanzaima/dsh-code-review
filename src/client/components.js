@@ -18,7 +18,7 @@ __def('components', function (exports, require, React) {
    *   FileNav          — grouped, filterable changed-file list with commit checkboxes.
    *   ContextMenu      — fixed-position keyboard-navigable menu.
    *   ConfirmDialog    — small confirmation dialog built on Modal.
-   *   CommitPanel      — collapsible commit message drawer (header + textarea).
+   *   CommitPanel      — collapsible commit message drawer (header + message box + AI draft action).
    *   PushDialog       — self-contained push dialog (own backdrop layer).
    *   PanelSettings    — in-panel settings page (AI grouping + interface).
    *   EmptyState       — centred empty/warn/error state.
@@ -1437,12 +1437,15 @@ __def('components', function (exports, require, React) {
   /**
    * Collapsible commit drawer. The checked (staged) file rows are the commit
    * set — that preview stays in the file navigation, so the drawer only carries
-   * the commit message and the action. The header row (title + checked-file
+   * the commit message and the actions. The header row (title + checked-file
    * count + expand toggle) is always visible; the body opens on demand and
-   * holds a multi-line message field, warnings and the commit action.
+   * holds a multi-line message field, warnings, the AI draft action and the
+   * commit action. There is deliberately no keyboard shortcut: the message is
+   * committed with the button only.
    *
    * Contract props: open, onToggle, message, onMessageChange, count, busy,
-   * canCommit, reasons [string], error, conflictCount, staleNotice, onCommit, t.
+   * canCommit, canGenerate, generateBusy, reasons [string], error,
+   * conflictCount, staleNotice, onCommit, onGenerate, t.
    */
   function CommitPanel(props) {
     var t = makeT(props.t);
@@ -1458,16 +1461,12 @@ __def('components', function (exports, require, React) {
       previousOpen.current = open;
     }, [open]);
 
-    function handleKeyDown(event) {
-      if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return;
-      event.preventDefault();
-      if (!props.canCommit || props.busy) return;
-      if (typeof props.onCommit === 'function') props.onCommit();
-    }
-
+    var generateBusy = !!props.generateBusy;
     var commitTitle = !props.canCommit
       ? disabledTitle(t, reasons[0] || t('reason.nothingToCommit'))
-      : t('commit.onlyStaged');
+      : generateBusy
+        ? t('commit.generating')
+        : t('commit.onlyStaged');
     var conflictBlocked = Number(props.conflictCount) > 0;
 
     return h('div', { className: cx('gr-commit', open && 'gr-commit-open') },
@@ -1496,11 +1495,10 @@ __def('components', function (exports, require, React) {
           value: message,
           placeholder: t('commit.messagePlaceholder'),
           ariaLabel: t('a11y.commitMessage'),
-          disabled: !!props.busy,
+          disabled: !!props.busy || generateBusy,
           onChange: function (event) {
             if (typeof props.onMessageChange === 'function') props.onMessageChange(event.target.value);
           },
-          onKeyDown: handleKeyDown,
         }),
         conflictBlocked
           ? h('div', { className: 'gr-warn-box', role: 'alert' }, t('commit.conflictBlocked'))
@@ -1508,14 +1506,18 @@ __def('components', function (exports, require, React) {
         props.staleNotice ? h('div', { className: 'gr-warn-box', role: 'status' }, String(props.staleNotice)) : null,
         props.error ? h('div', { className: 'gr-error-box', role: 'alert' }, errorMessage(props.error)) : null,
         h('div', { className: 'gr-commit-actions' },
-          h('span', { className: 'gr-commit-shortcut gr-dim' },
-            h(Kbd, null, util.isMac && util.isMac() ? '⌘' : 'Ctrl'),
-            h(Kbd, null, 'Enter')),
+          h(IconButton, {
+            label: t('commit.generate'),
+            busy: generateBusy,
+            disabled: !props.canGenerate || !!props.busy,
+            onClick: props.onGenerate,
+            t: t,
+          }, h(IconSpark, { size: ICON_SIZE.md })),
           h(Button, {
             variant: 'primary',
             onClick: props.onCommit,
             busy: !!props.busy,
-            disabled: !props.canCommit,
+            disabled: !props.canCommit || generateBusy,
             title: commitTitle,
             busyLabel: t('commit.running'),
             t: t,
@@ -2560,7 +2562,6 @@ __def('components', function (exports, require, React) {
       { keys: [mod, '←/→'], label: t('shortcut.prevChange') + ' / ' + t('shortcut.nextChange') },
       { keys: ['Enter'], label: t('shortcut.hunkMenu') },
       { keys: ['Shift', 'F10'], label: t('shortcut.contextMenu') },
-      { keys: [mod, 'Enter'], label: t('shortcut.commit') },
       { keys: ['R'], label: t('shortcut.refresh') },
       { keys: ['?'], label: t('shortcut.helpToggle') },
       { keys: ['Esc'], label: t('shortcut.close') },

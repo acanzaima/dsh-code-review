@@ -11,6 +11,8 @@ import { existsSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { BUNDLE_ID } from '../scripts/build.mjs';
+
 const CLIENT_BUNDLE = new URL('../client.js', import.meta.url);
 
 function reactStub() {
@@ -50,7 +52,7 @@ test('client bundle registers the plugin and its three slot entries', async () =
     delete globalThis.window;
   }
   assert.ok(registration, 'the bundle did not call window.__ModuleLoader__.load');
-  assert.equal(registration.id, 'dsh-code-review');
+  assert.equal(registration.id, BUNDLE_ID, 'the bundle id must match package.json name');
   assert.equal(typeof registration.factory, 'function');
 
   const react = reactStub();
