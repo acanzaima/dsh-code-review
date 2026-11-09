@@ -181,25 +181,27 @@ npm run release -- --dry-run
 
 README / README.en 顶部的简介图位于仓库根目录 `assets/`（`cover.zh.png` / `cover.en.png`），与 `docs/` 分开：`docs/` 只放维护者 / 集成者文档，README 素材放 `assets/`；两者都不随包发布。npm 页面渲染 README 时不会解析相对图片路径，这些图片在 npm 页面上不可见；需要显示时应改用绝对 URL。
 
-### 11.1 由 tag 触发的自动发布（GitHub Actions）
+### 11.1 由 tag 触发的自动发布（GitHub Actions + Trusted Publishing）
 
-`.github/workflows/publish.yml` 在推送 `v*` tag 时自动发布，本地 `git push origin v0.2.0` 与 GitHub 页面创建 tag（Tags → New tag，或用 Release 页面新建同名 tag）都会产生 tag push 事件，触发同一个 workflow。流程：
+`.github/workflows/publish.yml` 在推送 `v*` tag 时自动发布，本地 `git push origin v0.2.1` 与 GitHub 页面创建 tag（Tags → New tag，或用 Release 页面新建同名 tag）都会产生 tag push 事件，触发同一个 workflow。发布通过 npm Trusted Publishing（OIDC）完成：workflow 申请 GitHub OIDC token，npm 校验「仓库 + workflow 文件名 + environment」后签发短期发布凭据，因此仓库里不需要 `NPM_TOKEN` 等长期 token（2027-01 起 bypass-2FA token 也不能再直接发布）。流程：
 
-1. 校验 tag 名与 `package.json` 的 `version` 一致（`v0.2.0` ↔ `0.2.0`），不一致直接失败。
-2. 用 `secrets.NPM_TOKEN` 执行 `npm whoami` 快速验证凭据。
-3. 调用 `npm run release`（与本地发布同一条流水线）；`0.3.0-rc.1` 这类预发布版本自动发到 `next` dist-tag 而不是 `latest`。
+1. 预热 npm：Trusted Publishing 需要 npm CLI ≥ 11.5，而 Node 22 自带 npm 10，所以 workflow 先执行 `npm install -g npm@latest`。
+2. 校验 tag 名与 `package.json` 的 `version` 一致（`v0.2.1` ↔ `0.2.1`），不一致直接失败。
+3. 调用 `npm run release`：`release.mjs` 检测到 GitHub OIDC（`ACTIONS_ID_TOKEN_REQUEST_URL`）时跳过 `npm whoami`（没有 token 时该步骤只会 E401），其余校验 / 测试 / 构建 / 打包步骤不变，最后由 npm 交换 OIDC token 完成发布并自动附带 provenance；`0.3.0-rc.1` 这类预发布版本自动发到 `next` dist-tag 而不是 `latest`。
 
 前置条件与注意事项：
 
-- 仓库 secret `NPM_TOKEN` 必须是能发布该 scope 的 granular access token；首次发布前包还不存在，token 只能选「All packages」读写并勾选 Bypass 2FA，发布成功后再换成仅 `@acanzaima/dsh-code-review` 的 token 更安全。
+- 在 npm 包页面 Settings → Trusted Publisher 配置 GitHub Actions：用户 `acanzaima`、仓库 `dsh-code-review`、workflow `publish.yml`、environment `npm-publish`，Allowed actions 勾选 **Allow npm publish**。该配置创建后不能修改（只能删除重建）；新建连接后需要在 npm 给出的期限内发布一次完成验证（页面显示 `Pending validation`）。
+- workflow 的 `environment: npm-publish` 必须与 Trusted Publisher 的 environment 名称完全一致；如需人工审批，在仓库 Settings → Environments 给该环境加 required reviewers 即可，workflow 不需要改。
+- OIDC 信任的是 workflow 身份，因此仓库侧要保护发布链路：保护 `main`、限制谁能推送 `v*` tag、对 `.github/workflows/` 使用 CODEOWNERS 审查。
 - **version 变更必须先提交**，且 workflow 文件已在被 tag 的 commit 上：先推 `package.json` 版本号提交，再创建并推送 tag。
+- 从 token 发布迁移过来时：Trusted Publishing 验证成功后，删除仓库的 `NPM_TOKEN` secret 并撤销旧的 bypass-2FA token；发布链条上不应再保留任何长期凭据。
 - 同一个版本重复发布会失败（release 的 `version` 步骤拒绝覆盖），重跑 workflow 同理；发错版本应发新的 patch 版本。
-- 仓库公开时 tag 事件不会暴露 secret 给 fork PR；如需人工审批，在仓库 Settings → Environments 给 `npm-publish` 环境加 required reviewers 即可，workflow 不需要改。
-- 该 job 只跑 `ubuntu-latest` + Node 20；测试矩阵仍由 `ci.yml` 覆盖。
+- 该 job 只跑 `ubuntu-latest`；测试矩阵仍由 `ci.yml` 覆盖。
 
 ## 12. CI 与编码约定
 
-`.github/workflows/ci.yml` 在推送到 `main` / `master` 和所有 Pull Request 上运行：矩阵为 `ubuntu-latest` / `windows-latest` × Node `20` / `22`（`fail-fast: false`）；因为没有依赖，工作流不执行安装步骤，依次运行 `npm test`、`npm run validate`，并在 Ubuntu + Node 20 上额外运行 `npm run pack:check`；权限只读（`contents: read`），同一分支的旧运行会被取消。新增门禁时确保 CI 调用覆盖本地发布前的同一组检查。`.github/workflows/publish.yml` 只在 `v*` tag 上运行，直接复用 `npm run release`，不在 workflow 里重复实现发布门禁。
+`.github/workflows/ci.yml` 在推送到 `main` / `master` 和所有 Pull Request 上运行：矩阵为 `ubuntu-latest` / `windows-latest` × Node `20` / `22`（`fail-fast: false`）；因为没有依赖，工作流不执行安装步骤，依次运行 `npm test`、`npm run validate`，并在 Ubuntu + Node 20 上额外运行 `npm run pack:check`；权限只读（`contents: read`），同一分支的旧运行会被取消。新增门禁时确保 CI 调用覆盖本地发布前的同一组检查。`.github/workflows/publish.yml` 只在 `v*` tag 上运行，直接复用 `npm run release`，通过 Trusted Publishing（OIDC）发布、不使用仓库 secret，也不在 workflow 里重复实现发布门禁。
 
 编码约定：
 

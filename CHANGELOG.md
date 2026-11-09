@@ -3,6 +3,12 @@
 本项目的所有重要变更都记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-09
+
+### Changed
+
+- 发布流程迁移到 npm Trusted Publishing（OIDC）：`.github/workflows/publish.yml` 通过 GitHub OIDC 直接发布，不再依赖长期 `NPM_TOKEN` / bypass-2FA token（`permissions` 增加 `id-token: write`，发布 job 使用 Node 22 + npm ≥ 11.5，`actions/checkout` / `actions/setup-node` 升到 v5）；`npm run release` 在 GitHub OIDC 环境下跳过 `npm whoami`（没有 token 时该步骤只会返回 E401），发布由 npm 自动附带 provenance。迁移验证成功后应删除仓库的 `NPM_TOKEN` secret 并撤销旧的 bypass-2FA token。npm 包内容与运行时行为无变化。
+
 ## [0.2.0] - 2026-11-09
 
 ### Added
@@ -21,7 +27,7 @@
   `git remote set-url`、否则 `git remote add`；名称 / 地址经协议校验（`remote/invalid`），Git
   执行失败返回 `remote/failed`。
 - 插件在 DSH 插件列表中的显示名带上包名后缀，与 `dsh-context` 等插件一致：中文「代码审查
-  (dsh-code-review)」、英文「Code Review (dsh-code-review)」；中英文说明同步改为「非模态浮动窗口」
+  (@acanzaima/dsh-code-review)」、英文「Code Review (@acanzaima/dsh-code-review)」；中英文说明同步改为「非模态浮动窗口」
   的表述。`locales` 发布门禁会强制标题带包名后缀的约定。
 - 新增「打开项目 / 打开文件」：窗口标题栏的 split 按钮复用 DSH 的 open-in-app（目录应用目录 +
   `/open-in-app/open` 启动，图标与「（默认）」标记同宿主一致），可把仓库目录用文件资源管理器 /

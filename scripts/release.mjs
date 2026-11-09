@@ -8,7 +8,7 @@
  *   3. build     node scripts/build.mjs
  *   4. pack      npm pack --dry-run --json, then assert the tarball is exactly the allowlist
  *   5. dry run   stop here when --dry-run or RELEASE_DRY_RUN=1
- *   6. auth      npm whoami
+ *   6. auth      npm whoami (skipped under GitHub Actions OIDC trusted publishing)
  *   7. version   npm view <name> version (first publish allowed)
  *   8. publish   npm publish --access public
  *
@@ -107,8 +107,17 @@ async function main(argv) {
   }
   const { dryRun, tag, passthrough } = parseArguments(argv);
   const pkg = loadPackage();
+  /* GitHub Actions with `id-token: write` authenticates through npm Trusted
+   * Publishing (OIDC): there is no token at all, so `npm whoami` would only
+   * report E401. npm exchanges the OIDC token itself during publish. */
+  const trustedPublishing = process.env.GITHUB_ACTIONS === 'true'
+    && typeof process.env.ACTIONS_ID_TOKEN_REQUEST_URL === 'string'
+    && process.env.ACTIONS_ID_TOKEN_REQUEST_URL.length > 0;
 
-  console.log(`${pkg.name} release pipeline — ${pkg.name}@${pkg.version}${dryRun ? ' (dry run)' : ''}`);
+  console.log(
+    `${pkg.name} release pipeline — ${pkg.name}@${pkg.version}${dryRun ? ' (dry run)' : ''}` +
+      `${trustedPublishing ? ' [trusted publishing]' : ''}`,
+  );
 
   // 1. validate -----------------------------------------------------------
   step(1, 'validate', 'manifest, package layout, client sources/bundle, host imports, locales, icon, secrets');
@@ -147,19 +156,24 @@ async function main(argv) {
   }
 
   // 6. auth ---------------------------------------------------------------
-  step(6, 'auth', 'npm whoami');
-  const whoami = runNpm(['whoami']);
-  if (whoami.error) abort('auth', `could not run npm: ${whoami.error.message}`);
-  if (whoami.status !== 0) {
-    abort(
-      'auth',
-      'not logged in to the npm registry. Run "npm login" first. ' +
-        `The npm account must own the package name "${pkg.name}" or have access to its scope. ` +
-        `npm whoami said: ${tail(`${whoami.stdout ?? ''}\n${whoami.stderr ?? ''}`)}`,
-    );
+  if (trustedPublishing) {
+    step(6, 'auth', 'GitHub Actions OIDC trusted publishing — no npm token to check');
+    console.log('  auth: skipped (npm exchanges the GitHub OIDC token during publish)');
+  } else {
+    step(6, 'auth', 'npm whoami');
+    const whoami = runNpm(['whoami']);
+    if (whoami.error) abort('auth', `could not run npm: ${whoami.error.message}`);
+    if (whoami.status !== 0) {
+      abort(
+        'auth',
+        'not logged in to the npm registry. Run "npm login" first. ' +
+          `The npm account must own the package name "${pkg.name}" or have access to its scope. ` +
+          `npm whoami said: ${tail(`${whoami.stdout ?? ''}\n${whoami.stderr ?? ''}`)}`,
+      );
+    }
+    const npmUser = String(whoami.stdout ?? '').trim();
+    console.log(`  logged in as ${npmUser || '(npm returned no user name)'}`);
   }
-  const npmUser = String(whoami.stdout ?? '').trim();
-  console.log(`  logged in as ${npmUser || '(npm returned no user name)'}`);
 
   // 7. version ------------------------------------------------------------
   step(7, 'version', `npm view ${pkg.name} version`);
