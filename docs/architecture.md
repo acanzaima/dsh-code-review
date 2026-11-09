@@ -151,7 +151,7 @@ sequenceDiagram
 
 1. 用户在展开的提交区点击 sparkles 图标按钮。按钮只在「有已暂存条目、无未解决冲突、列表未被截断」时可用（与提交按钮的阻止原因一致，但不要求提交信息非空）。
 2. 客户端只发送 `{ requestId, sessionId? }` 调用 `commitMessage`；Host 重新读取状态、取已暂存条目，并在同一次请求里只读地取两份输入：`git diff --cached`（有界 patch）与 `git log`（最近 20 条提交的 subject / 正文摘录）。
-3. Host 用与 AI 归类相同的有效模型路由与推理档位调用一次 `llm.stream`（温度 0、45 秒超时、可取消）。提示词优先沿用仓库历史提交格式；没有历史或看不出稳定格式时使用 Conventional Commits `type(scope): 摘要`，多个独立细节用 `- ` 列表写在标题下。
+3. Host 用与 AI 归类相同的有效模型路由与推理档位调用一次 `llm.stream`（温度 0、45 秒超时、可取消）。提示词先按 `history.language`（由最近提交 subject 的主要语言算出：`en` / `zh` / `mixed` / `unknown`）锁定标题与正文语言，再优先沿用仓库历史提交格式；没有历史或看不出稳定格式时使用 Conventional Commits `type(scope): 摘要`，多个独立细节用 `- ` 列表写在标题下。
 4. 回复按纯文本整理（去代码块围栏、去“提交信息：”之类前缀、规范空行、≤ 4000 字符），返回 `{ message, model, history, repo }`；客户端把 `message` 写进可编辑的提交信息框，由用户确认后手动提交。
 5. 任何失败都只返回错误封套，不写 Git 状态、不改动已暂存内容；折叠提交区、关闭窗口或再次生成会取消请求（`commitMessageCancel`）。该动作与 AI 归类互相独立，不依赖 `aiClassify` 开关。
 

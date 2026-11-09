@@ -1483,7 +1483,12 @@ describe('commit message draft', () => {
       assert.equal(payload.diff.text.includes(unstagedMarker), false, 'unstaged worktree content must not be sent');
       assert.ok(payload.history.count >= 1);
       assert.ok(payload.history.commits.every((commit) => typeof commit.subject === 'string' && commit.subject.length > 0));
+      // The fixture history is English, so the prompt must ask for English even
+      // though the prompt itself is Chinese.
+      assert.equal(payload.history.language, 'en');
       assert.match(llmRequest.system, /提交信息/);
+      assert.match(llmRequest.system, /history\.language/);
+      assert.match(llmRequest.system, /必须全部用英文/);
       assert.equal(llmRequest.reasoningEffort, 'off');
 
       // Read-only: the index and HEAD are untouched.
@@ -1562,12 +1567,23 @@ describe('commit message draft', () => {
     assert.match(payload.diff.text, /patch 已截断/);
     assert.equal(payload.history.count, 3);
     assert.equal(payload.history.conventional, true);
+    assert.equal(payload.history.language, 'zh', 'the history subjects are Chinese');
     assert.ok(payload.history.commits.every((commit) => typeof commit.subject === 'string'));
 
     const empty = buildCommitMessagePayload({ patch: '', history: [] });
     assert.equal(empty.diff.truncated, false);
     assert.equal(empty.history.count, 0);
     assert.equal(empty.history.conventional, false);
+    assert.equal(empty.history.language, 'unknown', 'no history leaves the language to the patch / project hints');
+    // The language hint is deterministic, so the Chinese prompt cannot decide
+    // the reply language: recent subjects are the signal, and a body in another
+    // script never flips an English subject.
+    const english = buildCommitMessagePayload({ history: [{ subject: 'feat: add upload' }, { subject: 'fix(api): guard timeout' }] });
+    assert.equal(english.history.language, 'en');
+    const mixed = buildCommitMessagePayload({ history: [{ subject: 'feat: add upload' }, { subject: '修复：上传' }] });
+    assert.equal(mixed.history.language, 'mixed');
+    const bodyOnly = buildCommitMessagePayload({ history: [{ subject: 'fix: guard timeout', body: '原因：超时' }] });
+    assert.equal(bodyOnly.history.language, 'en', 'a body in another script must not flip an English subject');
     // A git-layer truncation is preserved even for a short patch.
     const clipped = buildCommitMessagePayload({ patch: 'diff --git a/x b/x', patchTruncated: true });
     assert.equal(clipped.diff.truncated, true);

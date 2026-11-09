@@ -444,7 +444,7 @@ test('focusWindow / closeWindow / patchWindow keep the stacking order and focus 
 
 test('window geometry helpers are pure and exported for the source tests', () => {
   const app = createClientRuntime().require('app');
-  for (const name of ['clampWindowSize', 'clampWindowRect', 'dragWindowRect', 'resizeWindowRect',
+  for (const name of ['clampWindowSize', 'clampWindowRect', 'clampMinimizedWindowRect', 'dragWindowRect', 'resizeWindowRect',
     'defaultWindowGeometry', 'maximizedWindowGeometry', 'windowGeometryForOpen', 'rememberWindowGeometry']) {
     assert.equal(typeof app[name], 'function', `app.${name} must stay exported for tests`);
   }
@@ -553,6 +553,34 @@ test('drag keeps the window fully inside the work area', () => {
   assert.deepEqual(shrunk, { x: rect.x, y: rect.y, width: app.WINDOW_LIMITS.minWidth, height: app.WINDOW_LIMITS.minHeight });
   assert.equal(east.x, rect.x);
   assert.equal(south.y, rect.y);
+});
+
+test('a minimized window drags against its title strip, not its restore height', () => {
+  const app = createClientRuntime().require('app');
+  const limits = app.WINDOW_LIMITS;
+  const viewport = { width: 1280, height: 800 };
+  const rect = { x: 200, y: 150, width: 900, height: 700 };
+
+  // A minimized window only occupies its title strip on screen, so it can be
+  // dragged all the way to the bottom edge of the work area...
+  const bottom = app.clampMinimizedWindowRect({ ...rect, y: 5000 }, viewport);
+  assert.equal(bottom.y, viewport.height - limits.headHeight,
+    'the strip may reach the bottom work-area edge');
+  // ...and up to the top edge, while the stored restore size survives.
+  assert.equal(app.clampMinimizedWindowRect({ ...rect, y: -5000 }, viewport).y, 0,
+    'the strip never slides under the DSH frame strip');
+  assert.equal(bottom.width, rect.width);
+  assert.equal(bottom.height, rect.height, 'the stored height is the restore size, not the strip height');
+  // Restoring that strip goes through the full-window clamp again, so the
+  // restored window is fully visible instead of growing off screen.
+  const restored = app.clampWindowRect({ ...rect, y: bottom.y }, viewport);
+  assert.equal(restored.y, viewport.height - limits.margin - rect.height);
+  assert.equal(restored.height, rect.height);
+  // The horizontal clamp keeps using the full width; an oversized stored width
+  // is clamped for the live area as well.
+  assert.equal(app.clampMinimizedWindowRect({ ...rect, x: 5000 }, viewport).x, viewport.width - rect.width);
+  assert.equal(app.clampMinimizedWindowRect({ x: 0, y: 0, width: 99999, height: 700 }, viewport).width,
+    viewport.width - limits.margin * 2);
 });
 
 test('the work area starts below the DSH frame title strip', () => {
@@ -1852,6 +1880,23 @@ test('window chrome exposes drag, minimize, maximize, close and resize handles',
   // its resize edges are hidden.
   assert.match(appSource, /if \(win\.maximized\) return;/, 'maximized windows are not draggable or resizable');
   assert.match(stylesSource, /\.gr-window-maximized \.gr-window-resize \{ display: none; \}/);
+  // A minimized window is only its title strip: its drag clamps against the
+  // strip height instead of the remembered restore height, patches the origin
+  // only, and offers no resize gesture or resize edges while minimized.
+  assert.match(appSource, /if \(win\.minimized && edge !== 'move'\) return;/,
+    'a minimized strip can be moved but not resized');
+  assert.match(appSource, /var dragged = win\.minimized/);
+  assert.match(appSource, /clampMinimizedWindowRect\(\{[\s\S]{0,260}?\}, start\.viewport\)/,
+    'the minimized drag clamps against the title-strip footprint');
+  assert.match(appSource, /state\.patchWindow\(win\.id, \{ x: dragged\.x, y: dragged\.y \}\)/,
+    'the minimized drag moves the origin and keeps the stored restore size');
+  assert.match(appSource, /clampMinimizedWindowRect\(win, viewport\)/,
+    'a resize event clamps a minimized window against its strip footprint');
+  assert.match(appSource,
+    /minimized: false[\s\S]{0,80}?clampWindowRect\(\{ x: win\.x, y: win\.y, width: win\.width, height: win\.height \}, viewportSize\(\)\)/,
+    'restoring a minimized strip re-clamps the full window');
+  assert.match(stylesSource, /\.gr-window-minimized \.gr-window-resize-e/,
+    'the right-edge resize handle is hidden while minimized');
   assert.match(appSource, /className: 'gr-window-btn gr-window-btn-close'/);
   assert.match(appSource, /onClick: closeWindow/);
   // Resize handles: east, south and south-east edges.

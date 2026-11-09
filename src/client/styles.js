@@ -124,9 +124,11 @@ __def('styles', function (exports) {
 .gr-window-btn-close:hover:not(:disabled) { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); }
 .gr-window-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .gr-window .gr-panel-body { border: 0; border-radius: 0; flex: 1 1 auto; min-height: 0; }
-/* Minimized: collapse to the title bar; JS clamps the restored geometry. */
+/* Minimized: collapse to the title bar; JS clamps the strip against its live
+ * height and re-clamps the restored geometry. A strip is not resizable. */
 .gr-window-minimized { min-height: 0; }
 .gr-window-minimized .gr-window-body { display: none; }
+.gr-window-minimized .gr-window-resize-e,
 .gr-window-minimized .gr-window-resize-s,
 .gr-window-minimized .gr-window-resize-se { display: none; }
 /* A maximized window fills the work area: resize handles would be a no-op. */

@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
-  <img alt="Node.js >= 20.11" src="https://img.shields.io/badge/node-%3E%3D20.11-339933?style=flat-square">
+  <img alt="Node.js 20.11 or newer" src="https://img.shields.io/badge/node-%3E%3D20.11-339933?style=flat-square">
   <img alt="DSH 0.2.2-rc.1" src="https://img.shields.io/badge/DSH-0.2.2--rc.1-5b6ee1?style=flat-square">
   <img alt="Zero runtime dependencies" src="https://img.shields.io/badge/dependencies-0-brightgreen?style=flat-square">
 </p>

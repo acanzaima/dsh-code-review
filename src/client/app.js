@@ -113,6 +113,27 @@ __def('app', function (exports, require, React) {
   }
 
   /**
+   * A minimized window renders as its title strip only: the stored rectangle is
+   * the footprint it restores to, but on screen it occupies just
+   * WINDOW_HEAD_HEIGHT. Clamp the live origin and width against the work area
+   * with that strip footprint — dragging a minimized window may otherwise never
+   * reach the lower part of the work area — while keeping the stored size intact
+   * as the restore footprint.
+   */
+  function clampMinimizedWindowRect(rect, viewport) {
+    var vp = viewport || viewportSize();
+    var size = clampWindowSize(rect && rect.width, rect && rect.height, vp);
+    var x = rect && Number.isFinite(rect.x) ? rect.x : 0;
+    var y = rect && Number.isFinite(rect.y) ? rect.y : 0;
+    return {
+      x: util.clamp(Math.round(x), 0, Math.max(0, vp.width - size.width)),
+      y: util.clamp(Math.round(y), 0, Math.max(0, vp.height - WINDOW_HEAD_HEIGHT)),
+      width: size.width,
+      height: size.height,
+    };
+  }
+
+  /**
    * Drag position: the window stays wholly inside the work area. Dragging is
    * not allowed to slide a window under the DSH title strip or past any frame
    * edge, so every title-bar button remains reachable and the DSH chrome is
@@ -2581,7 +2602,17 @@ __def('app', function (exports, require, React) {
     }
 
     function toggleMinimize() {
-      state.patchWindow(win.id, { minimized: !win.minimized });
+      if (win.minimized) {
+        /* Restoring grows the window back to its remembered footprint: re-clamp
+         * it against the live work area, otherwise a strip dragged to the
+         * bottom edge would come back half off screen. */
+        state.patchWindow(win.id, Object.assign(
+          { minimized: false },
+          clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewportSize()),
+        ));
+        return;
+      }
+      state.patchWindow(win.id, { minimized: true });
     }
 
     function toggleMaximize() {
@@ -2610,8 +2641,10 @@ __def('app', function (exports, require, React) {
       if (event.button !== undefined && event.button !== 0) return;
       if (event.defaultPrevented) return;
       /* A maximized window fills the work area: it is neither draggable nor
-       * resizable until it is restored. */
+       * resizable until it is restored. A minimized window is only its title
+       * strip, so it can be moved but offers no resize gesture either. */
       if (win.maximized) return;
+      if (win.minimized && edge !== 'move') return;
       if (edge === 'move' && isWindowControlTarget(event.target)) return;
       event.preventDefault();
       state.focusWindow(win.id);
@@ -2626,10 +2659,23 @@ __def('app', function (exports, require, React) {
         if (!active) return;
         var dx = moveEvent.clientX - start.pointerX;
         var dy = moveEvent.clientY - start.pointerY;
-        var next = edge === 'move'
-          ? dragWindowRect(start.rect, dx, dy, start.viewport)
-          : resizeWindowRect(start.rect, dx, dy, edge, start.viewport);
-        state.patchWindow(win.id, next);
+        if (edge === 'move') {
+          /* The drag clamps against the live footprint: a minimized window is
+           * only its title strip, so it uses the strip height instead of the
+           * remembered restore height. Only the origin moves; the stored size
+           * stays the restore footprint. */
+          var dragged = win.minimized
+            ? clampMinimizedWindowRect({
+                x: start.rect.x + dx,
+                y: start.rect.y + dy,
+                width: start.rect.width,
+                height: start.rect.height,
+              }, start.viewport)
+            : dragWindowRect(start.rect, dx, dy, start.viewport);
+          state.patchWindow(win.id, { x: dragged.x, y: dragged.y });
+          return;
+        }
+        state.patchWindow(win.id, resizeWindowRect(start.rect, dx, dy, edge, start.viewport));
       };
       var cleanup = function () {
         if (!active) return;
@@ -2759,7 +2805,9 @@ __def('app', function (exports, require, React) {
             state.patchWindow(win.id, maximizedWindowGeometry(viewport));
             continue;
           }
-          var rect = clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewport);
+          var rect = win.minimized
+            ? clampMinimizedWindowRect(win, viewport)
+            : clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewport);
           if (rect.x !== win.x || rect.y !== win.y || rect.width !== win.width || rect.height !== win.height) {
             state.patchWindow(win.id, rect);
           }
@@ -2861,6 +2909,7 @@ __def('app', function (exports, require, React) {
   exports.groupingSettingsPatch = groupingSettingsPatch;
   exports.clampWindowSize = clampWindowSize;
   exports.clampWindowRect = clampWindowRect;
+  exports.clampMinimizedWindowRect = clampMinimizedWindowRect;
   exports.dragWindowRect = dragWindowRect;
   exports.resizeWindowRect = resizeWindowRect;
   exports.defaultWindowGeometry = defaultWindowGeometry;
