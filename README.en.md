@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/cover.en.png" alt="dsh-code-review interface preview: review changes side by side, check files to stage, and commit inside the DSH Web UI" width="100%">
+  <img src="assets/cover.en.png" alt="dsh-code-review entry and interface illustration: open Code Review from the DSH conversation input toolbar to review changes side by side, stage files, and commit in a floating window" width="100%">
 </p>
 
 ## Features
@@ -26,26 +26,34 @@
 - **Side-by-side review**: inspect diffs, syntax highlighting and change statistics, with quick navigation between changes.
 - **Choose what to commit**: stage and unstage files or groups, with individual hunk operations and discard for unstaged changes.
 - **Commit and push**: write commit messages or let AI draft one, preview pushes and configure remotes.
-- **Flexible windows**: move, resize and review multiple sessions without blocking the conversation; supports DSH light/dark themes and Chinese/English.
+- **Flexible windows**: review multiple workspaces or sessions independently, with movable, resizable and minimizable windows that keep the conversation accessible; supports DSH light/dark themes and Chinese/English.
 - **Optional AI grouping**: organise changes by file role or feature logic for review and staging.
 
 ## Installation
 
-Requires the DSH Web UI, Git and Node.js ≥ 20.11 on the host machine. The plugin has been tested with DSH 0.2.2-rc.1.
+The plugin is published on npm as [`@acanzaima/dsh-code-review`](https://www.npmjs.com/package/@acanzaima/dsh-code-review) and installs through the DSH Plugins page. It needs a working Git and Node.js ≥ 20.11 (DSH Desktop bundles a suitable runtime); tested with DSH 0.2.2-rc.1.
 
-To try the development version:
+### Install through DSH Desktop (recommended)
 
-1. On this repository's page, click **Code → Download ZIP** and extract the archive.
-2. In DSH's plugin manager, use the extracted project directory as the installation target (the folder containing `package.json`).
-3. Refresh the DSH page after installation. An “Open Code Review” button will appear in the conversation input toolbar.
+1. Open DSH Desktop and choose **Plugins** in the sidebar.
+2. Click **Add plugin**, enter `@acanzaima/dsh-code-review` as the package name and click **Install**.
+3. Click **Enable now** when the installation finishes; if you closed the dialog, switch the plugin on under **Installed plugins** instead.
+4. Go back to the conversation: the “Open Code Review” button appears in the input toolbar. If it does not, restart DSH once.
 
-You can also install it from npm: use `@acanzaima/dsh-code-review` as the installation target in DSH's plugin manager (released versions start at 0.2.0).
+### Install from source
 
-The source includes the client files, so no dependency installation or build is needed. To upgrade, remove the old version, install the new one and refresh the page; restart DSH if the update has not taken effect. Disable or uninstall the plugin through the plugin manager.
+For following the latest changes or debugging. The source already ships the built client file, so there is nothing to install or build.
+
+- Clone the repository: `git clone https://github.com/acanzaima/dsh-code-review.git`.
+- Or download **Source code (zip)** for the wanted version from the [Releases page](https://github.com/acanzaima/dsh-code-review/releases) and extract it.
+
+Then click **Add plugin** on the Plugins page, enter the absolute path of the cloned or extracted directory (the one containing `package.json`), click **Install**, and enable it as described above.
+
+Upgrades, disabling and uninstalling also happen on the Plugins page; to upgrade, uninstall the old version first and then install the new one.
 
 ## Usage
 
-1. In a DSH conversation for your Git project, click “Open Code Review”.
+1. In a DSH conversation for your Git project, click the Code Review icon in the toolbar below the input field (tooltip: “Open Code Review”; see the cover above for its location).
 2. Select a file on the left to inspect its diff. Search for files or jump between changes.
 3. Check a file or group to stage it. Uncheck it to unstage while keeping the file contents. The select-all checkbox applies to the current filter results.
 4. Expand the commit area at the bottom, write a message and commit. Click “Push” when you want to sync with the remote. The sparkles icon to the left of the commit button **drafts a commit message from the staged changes**; the draft lands in the editable message field — review or edit it, then commit.
@@ -53,6 +61,13 @@ The source includes the client files, so no dependency installation or build is 
 Right-click a file or a change block in the diff to stage, unstage or discard it. **Discard removes unstaged changes, requires confirmation and cannot be undone.**
 
 Press `?` inside the window for keyboard shortcuts. `Esc` closes menus and dialogs; use the title-bar close button to close the review window.
+
+### Multiple workspaces and minimizing
+
+- **Independent reviews**: open Code Review from different workspaces or sessions to keep several review windows open at once. Each window stays with the repository it opened for, with its own file selection and diff view. Switching workspaces or sessions leaves existing windows open and keeps their repositories unchanged.
+- **Minimize and restore**: click “Minimize” in the title bar to collapse a window to a title strip showing its repository name, keeping several projects accessible while you continue chatting. Click the upward arrow on the right of the strip to restore the window.
+
+Each window has its own review UI state; plugin settings and the Git state of the same repository remain shared. Windows exist only on the current page: refreshing DSH closes all review windows.
 
 ## AI features
 

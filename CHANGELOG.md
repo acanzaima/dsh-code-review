@@ -3,6 +3,14 @@
 本项目的所有重要变更都记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+
+- 中英文 README 补充多工作区 / 多会话独立审阅、最小化为仓库标题条与恢复操作，并说明切换工作区时窗口保留、共享状态范围及刷新页面后的行为。
+- 中英文 README 封面增加 DSH 输入框入口示意、图标局部放大与指向审阅窗口的箭头；使用说明同步标明入口所在的工具行。
+- README 的安装说明改为以 DSH 桌面端插件页安装 npm 包（`@acanzaima/dsh-code-review`）为首选方式，克隆源码或从 GitHub Release 下载源码包作为备选；中英文 README 同步更新。升级统一为先卸载旧版再安装新版。
+
 ## [0.2.1] - 2026-11-09
 
 ### Changed

@@ -181,6 +181,8 @@ npm run release -- --dry-run
 
 README / README.en 顶部的简介图位于仓库根目录 `assets/`（`cover.zh.png` / `cover.en.png`），与 `docs/` 分开：`docs/` 只放维护者 / 集成者文档，README 素材放 `assets/`；两者都不随包发布。npm 页面渲染 README 时不会解析相对图片路径，这些图片在 npm 页面上不可见；需要显示时应改用绝对 URL。
 
+封面是导览合成示意图：上方用简化的 DSH 输入框交代入口位置，局部放大 Code Review 按钮，再用箭头指向下方的主审阅窗口。它不是逐像素的真实截图；更新时应核对 `src/client/components.js` 中 `ReviewButton` / `ICON_PARTS.review` 的实际按钮与图标，并同步中英文版本。
+
 ### 11.1 由 tag 触发的自动发布（GitHub Actions + Trusted Publishing）
 
 `.github/workflows/publish.yml` 在推送 `v*` tag 时自动发布，本地 `git push origin v0.2.1` 与 GitHub 页面创建 tag（Tags → New tag，或用 Release 页面新建同名 tag）都会产生 tag push 事件，触发同一个 workflow。发布通过 npm Trusted Publishing（OIDC）完成：workflow 申请 GitHub OIDC token，npm 校验「仓库 + workflow 文件名 + environment」后签发短期发布凭据，因此仓库里不需要 `NPM_TOKEN` 等长期 token（2027-01 起 bypass-2FA token 也不能再直接发布）。流程：
