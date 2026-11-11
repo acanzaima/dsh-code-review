@@ -248,7 +248,7 @@ __def('state', function (exports, require, React) {
     loaded: false,
     saving: false,
     error: null,
-    value: { aiClassify: false, aiGrouping: 'role', maxCandidates: 50, reasoningEffort: null },
+    value: { aiClassify: false, aiGrouping: 'role', commitMode: 'commit', maxCandidates: 50, reasoningEffort: null },
     locale: null,
     model: null,
   });

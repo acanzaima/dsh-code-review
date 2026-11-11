@@ -773,6 +773,12 @@ export function createHostPlugin(ctx) {
       if ('aiGrouping' in patch && patch.aiGrouping !== 'role' && patch.aiGrouping !== 'logic') {
         throw new ProtocolError('settings/invalid', 'aiGrouping must be "role" or "logic"');
       }
+      // The commit drawer's split control persists its action mode; only the two
+      // documented values are accepted (the default is 'commit'). The one-click
+      // AI·commit+push action lives in the toolbar and is not a mode.
+      if ('commitMode' in patch && patch.commitMode !== 'commit' && patch.commitMode !== 'commitPush') {
+        throw new ProtocolError('settings/invalid', 'commitMode must be "commit" or "commitPush"');
+      }
       if ('maxCandidates' in patch && !Number.isFinite(patch.maxCandidates)) {
         throw new ProtocolError('settings/invalid', 'maxCandidates must be a number');
       }

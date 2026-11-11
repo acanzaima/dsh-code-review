@@ -200,6 +200,10 @@ __def('styles', function (exports) {
 .gr-topbar .gr-topbar-grouping .gr-combo-value { flex: 0 1 auto; }
 .gr-topbar .gr-topbar-grouping .gr-combo-chevron .gr-ico { width: 12px; height: 12px; }
 .gr-topbar-push { min-width: 64px; }
+/* One-click AI·commit+push sits next to (not inside) the push-dialog button. On
+ * narrow toolbars the label is hidden and the spark icon + tooltip carry it. */
+.gr-topbar-ai-commit { flex: 0 0 auto; }
+.gr-topbar-ai-commit .gr-ai-commit-label { white-space: nowrap; }
 /* AI grouping state rides after the change summary inside the shrinkable
  * toolbar middle. It is part of the summary row, so it never claims a row of
  * its own; long notices truncate and stay available in full through the title
@@ -231,6 +235,8 @@ __def('styles', function (exports) {
   .gr-topbar-actions { gap: 2px; }
   .gr-topbar-actions .gr-topbar-sep { margin: 0 1px; }
   .gr-topbar-push { min-width: 0; padding: 0 8px; }
+  .gr-topbar-ai-commit { padding: 0 8px; }
+  .gr-topbar-ai-commit .gr-ai-commit-label { display: none; }
   .gr-topbar .gr-topbar-grouping .gr-combo-trigger { padding: 0 7px; }
 }
 
@@ -373,6 +379,7 @@ __def('styles', function (exports) {
 .gr-menu-item:hover:not([aria-disabled="true"]), .gr-menu-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-4, var(--dsw-alias-bg-layer-2))); outline: none; }
 .gr-menu-item[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .gr-menu-item-danger { color: var(--dsw-alias-state-error-primary); }
+.gr-menu-check { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; padding-left: 8px; color: var(--dsw-alias-brand-primary); }
 .gr-menu-sep { height: .5px; margin: 3px 8px; background: var(--dsw-alias-border-l2); }
 
 /* ---------- commit drawer ---------- */
@@ -390,6 +397,19 @@ __def('styles', function (exports) {
 .gr-commit .gr-textarea { min-height: 84px; }
 .gr-commit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .gr-commit-actions .gr-iconbtn { width: 32px; height: 32px; }
+/* Split commit action inside the drawer: the primary half runs the remembered
+ * commit mode, the chevron half opens the mode menu. The menu is a fixed layer
+ * rendered by the component (it opens upward, away from the drawer's bottom edge). */
+.gr-commit-target { display: inline-flex; align-items: stretch; height: 28px; flex: 0 0 auto; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); overflow: hidden; }
+.gr-commit-main { display: inline-flex; align-items: center; gap: 6px; max-width: 210px; padding: 0 10px; border: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; line-height: 1; cursor: pointer; }
+.gr-commit-mode-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-commit-mode-chevron { display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border: 0; border-left: .5px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.gr-commit-mode-chevron .gr-ico { width: 11px; height: 11px; }
+.gr-commit-main:hover:not(:disabled), .gr-commit-mode-chevron:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.gr-commit-main:disabled, .gr-commit-mode-chevron:disabled { opacity: .5; cursor: default; }
+/* The split control clips its children to the shared border radius, so the focus
+ * ring is painted inside the button box (a host-consistent ring must stay visible). */
+.gr-commit-main:focus-visible, .gr-commit-mode-chevron:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 .gr-commit .gr-warn-box, .gr-commit .gr-error-box { margin: 0; }
 .gr-textarea { width: 100%; min-height: 92px; resize: vertical; padding: 8px 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 1.6; transition: border-color var(--ds-transition-duration-fast, 100ms) var(--ds-ease-in-out, ease); }
 .gr-textarea:hover:not(:disabled):not(:focus):not(:focus-visible) { border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
@@ -423,11 +443,22 @@ __def('styles', function (exports) {
 /* Preview failed: an explicit error state (message + retry), never a spinner. */
 .gr-push-failed { align-items: stretch; justify-content: flex-start; padding: 20px 0; }
 .gr-push-error { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }
-.gr-push-flow { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
-.gr-push-arrow { display: inline-flex; align-items: center; color: var(--dsw-alias-label-secondary); padding-bottom: 4px; }
+/* Branch flow: three fields with one shared 34px control height, so the labels
+ * sit on a single baseline and the arrow / slash separate the values rather than
+ * the labels. The remote Select is re-skinned to the same surface as the branch
+ * input; the read-only local branch gets a muted value box of the same size. */
+.gr-push-flow { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 4px 10px; }
+.gr-push-field-local { flex: 0 1 auto; min-width: 92px; max-width: 150px; }
+.gr-push-field-remote { flex: 1 1 130px; max-width: 200px; }
+.gr-push-field-target { flex: 1.4 1 170px; }
+.gr-push-arrow { display: inline-flex; align-items: center; justify-content: center; align-self: flex-end; height: 34px; min-width: 12px; color: var(--dsw-alias-label-secondary); }
 .gr-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gr-field-label { color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); font-size: 12px; font-weight: 500; line-height: 18px; }
 .gr-field-value { font-size: 13px; line-height: 20px; padding-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-push-flow .gr-field-value { display: block; height: 34px; line-height: 32px; padding: 0 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-label-primary) 2%, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); }
+.gr-push-flow .gr-input { height: 34px; }
+.gr-push-flow .gr-combo-trigger { height: 34px; padding: 0 12px; gap: 8px; border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); font-size: 13px; line-height: 20px; }
+.gr-push-flow .gr-combo-trigger:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
 .gr-input, .gr-select { height: 34px; min-width: 120px; padding: 0 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; transition: border-color var(--ds-transition-duration-fast, 100ms) var(--ds-ease-in-out, ease); }
 .gr-input:hover:not(:disabled):not(:focus):not(:focus-visible), .gr-select:hover:not(:disabled):not(:focus):not(:focus-visible) { border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
 .gr-input:focus, .gr-input:focus-visible, .gr-select:focus, .gr-select:focus-visible { outline: none; border-color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); }

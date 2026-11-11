@@ -804,24 +804,28 @@ test('settings disclosure retains the full data, operation and fallback explanat
   assert.match(stylesSource, /\.gr-settings-note\[open\] \.gr-settings-note-chevron \{ transform: rotate\(90deg\)/);
 });
 
-test('commit drawer collapses to a header, drafts and commits from guarded actions', () => {
+test('commit drawer carries the message draft and the split commit action', () => {
   const runtime = createClientRuntime();
   const components = runtime.require('components');
   const ui = runtime.require('ui');
   const t = runtime.require('i18n').createI18n('en').t;
-  let commits = 0;
   let toggles = 0;
   let drafts = 0;
   const base = {
     t, message: 'msg', count: 2,
-    reasons: [t('commit.messageRequired')],
-    onCommit: () => { commits += 1; },
     onToggle: () => { toggles += 1; },
     onGenerate: () => { drafts += 1; },
+    commitMode: 'commit',
+    commitBusy: false,
+    commitGenerating: false,
+    commitCanRun: true,
+    commitReasons: [],
+    onCommit: () => {},
+    onChangeCommitMode: () => {},
   };
 
   // Collapsed by default: only the header row (title, count, toggle) is there.
-  const closed = components.CommitPanel(Object.assign({}, base, { open: false, canCommit: false }));
+  const closed = components.CommitPanel(Object.assign({}, base, { open: false, canGenerate: false }));
   const closedElements = collectElements(closed);
   assert.equal(closedElements.some((element) => element.type === ui.Textarea), false, 'collapsed drawer has no message field');
   assert.ok(collectText(closed).includes(t('commit.checkedFiles', { n: 2 })), 'the checked-file count is in the header');
@@ -834,24 +838,23 @@ test('commit drawer collapses to a header, drafts and commits from guarded actio
   toggle.props.onClick();
   assert.equal(toggles, 1);
 
-  // Expanded: a multi-line textarea (not a single-line field) plus two guarded
-  // actions — the AI draft and the commit button. There is no keyboard commit:
-  // the old Ctrl/Cmd+Enter binding was removed on purpose.
-  for (const [canCommit, busy, canGenerate, generateBusy] of [
-    [true, false, true, false],
-    [false, false, false, false],
-    [true, true, true, true],
+  // Expanded: a multi-line textarea plus the AI draft action and the split
+  // commit action (a raw button inside its own split control, not a plain
+  // primary Button). The message box binds no keyboard commit shortcut.
+  for (const [busy, canGenerate, generateBusy] of [
+    [false, true, false],
+    [false, false, false],
+    [true, true, true],
   ]) {
-    const tree = components.CommitPanel(Object.assign({}, base, { open: true, canCommit, busy, canGenerate, generateBusy }));
+    const tree = components.CommitPanel(Object.assign({}, base, { open: true, busy, canGenerate, generateBusy }));
     const elements = collectElements(tree);
     const field = elements.find((element) => element.type === ui.Textarea
       && element.props.ariaLabel === t('a11y.commitMessage'));
     assert.ok(field, 'the commit message field is a textarea');
     assert.equal(field.props.rows, 3, 'the message box is multi-line');
     assert.equal(field.props.onKeyDown, undefined, 'the message box binds no keyboard commit shortcut');
-    const action = elements.find((element) => element.type === ui.Button && element.props.variant === 'primary');
-    assert.ok(action, 'the commit action is rendered');
-    assert.equal(ui.Button(action.props).props.disabled, !canCommit || generateBusy ? true : undefined);
+    assert.equal(elements.some((element) => element.type === ui.Button && element.props.variant === 'primary'), false,
+      'the commit action is a split control, never a plain primary button');
     const draft = elements.find((element) => element.type === ui.IconButton && element.props.label === t('commit.generate'));
     assert.ok(draft, 'the AI draft action is rendered');
     assert.equal(draft.props.busy, generateBusy);
@@ -861,25 +864,33 @@ test('commit drawer collapses to a header, drafts and commits from guarded actio
     const draftButton = ui.IconButton(draft.props);
     assert.equal(draftButton.props.title, t('commit.generate'), 'the tooltip is the action name');
     assert.equal(draftButton.props['aria-label'], t('commit.generate'));
-    // The draft action precedes the commit action inside the action row.
     const row = elements.find((element) => element.props.className === 'gr-commit-actions');
     assert.ok(row, 'the actions are grouped');
-    const children = (row.props.children || []).filter(Boolean);
-    assert.equal(children[0].type, ui.IconButton);
-    assert.equal(children[1].type, ui.Button);
+    const rowChildren = Array.isArray(row.props.children) ? row.props.children : [row.props.children];
+    const children = rowChildren.filter(Boolean);
+    assert.equal(children.length, 2, 'the drawer action row holds the AI draft and the split commit action');
+    assert.equal(children[0].type, ui.IconButton, 'the AI draft stays on the left');
+    assert.equal(children[1].type, components.CommitAction, 'the commit split action sits on the right');
+    assert.equal(children[1].props.mode, 'commit');
+    assert.equal(children[1].props.onCommit, base.onCommit);
   }
 
-  // Each action only fires its own callback.
-  const expanded = components.CommitPanel(Object.assign({}, base, { open: true, canCommit: true, canGenerate: true }));
+  const expanded = components.CommitPanel(Object.assign({}, base, { open: true, canGenerate: true }));
   const expandedElements = collectElements(expanded);
   const draft = expandedElements.find((element) => element.type === ui.IconButton && element.props.label === t('commit.generate'));
   draft.props.onClick();
   assert.equal(drafts, 1, 'the draft action calls onGenerate');
-  assert.equal(commits, 0, 'drafting never commits');
-  const action = expandedElements.find((element) => element.type === ui.Button && element.props.variant === 'primary');
-  action.props.onClick();
-  assert.equal(commits, 1, 'the commit action still commits');
-  assert.equal(drafts, 1, 'committing never drafts');
+
+  // Source-level guard: the drawer wires the split action and the old plain
+  // commit button / primary label stay gone.
+  const panelStart = componentsSource.indexOf('function CommitPanel(');
+  const panelEnd = componentsSource.indexOf('function PushDialog(', panelStart);
+  assert.ok(panelStart !== -1 && panelEnd > panelStart, 'CommitPanel source region is discoverable');
+  const panelSource = componentsSource.slice(panelStart, panelEnd);
+  for (const token of ["t('commit.action')", 'commitTitle', 'canCommit']) {
+    assert.equal(panelSource.includes(token), false, `CommitPanel must not reference ${token}`);
+  }
+  assert.ok(panelSource.includes('h(CommitAction, {'), 'CommitPanel renders the split commit action');
 });
 
 /* ------------------------------------------------------------------------- */
@@ -1383,6 +1394,33 @@ test('push dialog shows a read-only source branch and an editable target branch'
   assert.equal(elements.filter((element) => element.type === 'input').length, 0,
     'input chrome comes from the shared TextField primitive, not raw <input>');
   assert.ok(collectText(tree).includes('main'), 'the source branch must be displayed read-only');
+
+  // The branch flow is three aligned field groups sharing one control height:
+  // the local branch is a read-only value box, the remote is a Select and the
+  // target is the editable TextField. All three labels sit on one baseline.
+  const flow = elements.find((element) => element.props.className === 'gr-push-flow');
+  assert.ok(flow, 'the branch flow is a grouped row');
+  const flowFields = collectElements(flow).filter((element) => element.props.className
+    && String(element.props.className).indexOf('gr-push-field-') !== -1);
+  assert.deepEqual(flowFields.map((element) => element.props.className), [
+    'gr-field gr-push-field-local',
+    'gr-field gr-push-field-remote',
+    'gr-field gr-push-field-target',
+  ]);
+  const localValue = collectElements(flowFields[0]).find((element) => elementClasses(element).includes('gr-field-value'));
+  assert.ok(localValue, 'the read-only local branch uses the shared value box');
+  const flowSelect = collectElements(flowFields[1]).find((element) => element.type.name === 'Select');
+  assert.ok(flowSelect, 'the remote field keeps the shared Select');
+  const flowInput = collectElements(flowFields[2]).find((element) => element.type.name === 'TextField');
+  assert.ok(flowInput, 'the target field keeps the shared TextField');
+  // One control tier: 34px for the value box, Select trigger and text input, and
+  // the separators centre on that same row instead of adding their own offset.
+  assert.match(stylesSource, /\.gr-push-flow \.gr-field-value \{[^}]*height: 34px/);
+  assert.match(stylesSource, /\.gr-push-flow \.gr-input \{ height: 34px; \}/);
+  assert.match(stylesSource, /\.gr-push-flow \.gr-combo-trigger \{[^}]*height: 34px[^}]*font-size: 13px/);
+  assert.match(stylesSource, /\.gr-push-arrow \{[^}]*align-self: flex-end; height: 34px/);
+  assert.match(stylesSource, /\.gr-push-field-local \{[^}]*min-width: 92px/);
+  assert.match(stylesSource, /\.gr-push-field-target \{[^}]*flex: 1\.4 1 170px/);
 });
 
 /* ------------------------------------------------------------------------- */
@@ -2673,11 +2711,8 @@ test('the commit drawer advertises the Conventional Commits placeholder', () => 
       open: true,
       message: '',
       count: 1,
-      canCommit: true,
-      reasons: [],
       onToggle: () => {},
       onMessageChange: () => {},
-      onCommit: () => {},
     });
     const textareas = collectElements(tree).filter((element) =>
       typeof element.type === 'function' && element.type.name === 'Textarea');
@@ -2723,7 +2758,8 @@ test('app wires the shared clipboard and mounts the persistent status strip', ()
   const block = appSource.slice(start, appSource.indexOf('}),', start) + 3);
   assert.match(block, /status: snapshot/);
   assert.match(block, /repo: snapshot && snapshot\.repo \? snapshot\.repo : null/);
-  assert.match(block, /busy: !!busy \|\| commitBusy/);
+  assert.match(block, /busy: !!busy \|\| commitBusy \|\| commitGenerating/);
+  assert.match(block, /operation: busy\s*\? t\('op\.running'\)\s*:\s*commitGenerating\s*\? t\('commit\.generating'\)/);
   assert.match(block, /error: operationError \|\| \(refreshError \? \{ message: describeError\(refreshError, t\) \} : null\)/);
   assert.match(block, /onDismiss: function \(\) \{ setOperationError\(null\); setNotice\(null\); setRefreshError\(null\); \}/);
   // The footer closes the panel body, after the workspace and commit drawer.
@@ -3215,63 +3251,327 @@ test('the file title row clusters locate/bulk controls on the right', () => {
 });
 
 /* ------------------------------------------------------------------------- */
-/* Commit action — fixed label, count stays in the drawer header (report)    */
+/* Commit split action in the drawer — remembered mode drives every action    */
 /* ------------------------------------------------------------------------- */
 
-test('the commit action has a fixed label and the count lives in the drawer header', () => {
+test('the commit split action lives in the drawer and runs the remembered mode', () => {
   const runtime = createClientRuntime();
   const components = runtime.require('components');
   const ui = runtime.require('ui');
   const i18n = runtime.require('i18n');
+  const app = runtime.require('app');
+  const t = i18n.createI18n('zh').t;
+  const base = {
+    t,
+    mode: 'commit',
+    busy: false,
+    generating: false,
+    canRun: true,
+    reasons: [],
+    onCommit: function () {},
+    onChangeMode: function () {},
+  };
+  const render = (extra) => collectElements(components.CommitAction(Object.assign({}, base, extra)));
 
-  // The label is fixed and the empty-action variant is gone.
-  for (const locale of ['zh', 'en']) {
-    const dict = i18n.DICTIONARIES[locale];
-    assert.equal(Object.prototype.hasOwnProperty.call(dict, 'commit.actionEmpty'), false,
-      `${locale}: the empty-action label was removed`);
-    assert.equal(typeof dict['commit.action'], 'string');
-    assert.equal(/\{\s*n\s*\}/.test(dict['commit.action']), false,
-      `${locale}: the commit label must not repeat the file count: ${dict['commit.action']}`);
-    assert.equal(dict['commit.action'].length > 0, true);
+  // The split control is rendered by CommitAction: a primary half naming the
+  // persisted mode plus a chevron that opens the mode menu.
+  const initial = render({});
+  const target = initial.find((element) => elementClasses(element).includes('gr-commit-target'));
+  assert.ok(target, 'the drawer action renders the commit split control');
+  const main = initial.find((element) => elementClasses(element).includes('gr-commit-main'));
+  const chevron = initial.find((element) => elementClasses(element).includes('gr-commit-mode-chevron'));
+  assert.ok(main && chevron, 'the control has a primary half and a mode-menu half');
+  assert.equal(chevron.props['aria-haspopup'], 'menu');
+  assert.equal(chevron.props['aria-expanded'], 'false');
+  assert.equal(chevron.props['aria-label'], t('commit.mode'));
+  assert.equal(chevron.props.title, t('commit.mode'));
+
+  // Placement regression: the commit split control lives in the drawer; the
+  // top toolbar keeps its old action set (branch / grouping / reclassify /
+  // refresh / push / settings / help).
+  const toolbarElements = collectElements(components.TopBar({
+    t,
+    status: { repo: null, summary: null },
+    repo: null,
+  }));
+  assert.equal(toolbarElements.some((element) => elementClasses(element).includes('gr-commit-target')), false,
+    'the toolbar must not render the commit split control');
+  assert.ok(toolbarElements.some((element) => elementClasses(element).includes('gr-topbar-push')),
+    'the ordinary push dialog action stays in the toolbar');
+
+  // Every drawer mode names itself on the primary half and uses its own glyph.
+  // The one-click AI·commit+push is a separate toolbar button, not a drawer mode.
+  for (const [mode, labelKey, iconName] of [
+    ['commit', 'commit.modeCommit', 'IconCommit'],
+    ['commitPush', 'commit.modeCommitPush', 'IconPush'],
+  ]) {
+    const elements = render({ mode: mode });
+    const action = elements.find((element) => elementClasses(element).includes('gr-commit-main'));
+    assert.ok(collectText(action).includes(t(labelKey)), `${mode}: the active mode is named on the button`);
+    assert.equal(action.props['aria-label'], t(labelKey));
+    assert.equal(action.props.children[0].type.name, iconName, `${mode}: the mode owns its glyph`);
+    assert.equal(action.props.disabled, undefined, `${mode}: a runnable mode is enabled`);
   }
-  assert.equal(i18n.DICTIONARIES.zh['commit.action'], '提交');
-  assert.equal(i18n.DICTIONARIES.en['commit.action'], 'Commit');
-  assert.equal(componentsSource.includes('commit.actionEmpty'), false,
-    'CommitPanel must not reference the removed empty-action label');
+  // Retired / unknown persisted values fall back to the plain commit mode.
+  for (const retired of ['aiCommitPush', 'future-mode']) {
+    const fallback = render({ mode: retired }).find((element) => elementClasses(element).includes('gr-commit-main'));
+    assert.ok(collectText(fallback).includes(t('commit.modeCommit')), `${retired}: degrades to commit`);
+    assert.equal(fallback.props['aria-label'], t('commit.modeCommit'));
+  }
 
+  // ---- toolbar one-click AI·commit+push ----------------------------------
+  const toolbarBase = {
+    t,
+    status: { repo: null, summary: null },
+    repo: null,
+    onRefresh: function () {},
+    onOpenPush: function () {},
+    pushDisabledReason: '',
+    aiCommitBusy: false,
+    aiCommitCanRun: true,
+    aiCommitDisabledReason: null,
+    onAiCommitPush: function () {},
+    onChangeGrouping: function () {},
+  };
+  const renderToolbar = (extra) => collectElements(components.TopBar(Object.assign({}, toolbarBase, extra)));
+  const aiInitial = renderToolbar({});
+  const aiButtonEl = aiInitial.find((element) => elementClasses(element).includes('gr-topbar-ai-commit'));
+  assert.ok(aiButtonEl, 'the toolbar offers the one-click AI·commit+push action');
+  assert.ok(collectText(aiButtonEl).includes(t('commit.modeAiCommitPush')), 'the AI button is labelled');
+  assert.equal(aiButtonEl.props.ariaLabel, t('commit.modeAiCommitPush'));
+  assert.equal(aiButtonEl.props.title, t('commit.modeAiPushHint'));
+  assert.equal(aiButtonEl.props.disabled, false, 'a runnable AI action is enabled');
+  // It sits next to (but is separate from) the push-dialog button: no split
+  // control, no mode menu, and the push button keeps its own action.
+  assert.ok(aiInitial.some((element) => elementClasses(element).includes('gr-topbar-push')),
+    'the push-dialog button stays in the toolbar');
+  assert.equal(aiInitial.filter((element) => elementClasses(element).includes('gr-topbar-ai-commit')).length, 1);
+  assert.equal(aiInitial.some((element) => elementClasses(element).includes('gr-commit-target')),
+    false, 'the toolbar AI action is not the drawer split control');
+  let aiRuns = 0;
+  renderToolbar({ onAiCommitPush: function () { aiRuns += 1; } })
+    .find((element) => elementClasses(element).includes('gr-topbar-ai-commit')).props.onClick();
+  assert.equal(aiRuns, 1, 'one click dispatches the AI action without opening the drawer');
+  const aiBlocked = renderToolbar({ aiCommitCanRun: false, aiCommitDisabledReason: t('commit.nothingChecked') })
+    .find((element) => elementClasses(element).includes('gr-topbar-ai-commit'));
+  assert.equal(aiBlocked.props.disabled, true, 'missing guards disable the AI action');
+  assert.equal(ui.Button(aiBlocked.props).props.disabled, true);
+  assert.equal(aiBlocked.props.title, t('actions.disabledReason', { reason: t('commit.nothingChecked') }));
+  const aiBusyEl = renderToolbar({ aiCommitBusy: true, aiCommitDisabledReason: t('commit.generating') })
+    .find((element) => elementClasses(element).includes('gr-topbar-ai-commit'));
+  assert.equal(aiBusyEl.props.busy, true, 'in-flight AI action shows the shared spinner');
+  assert.equal(aiBusyEl.props.disabled, true);
+  assert.match(stylesSource, /\.gr-topbar-ai-commit/);
+  assert.match(stylesSource, /\.gr-topbar-ai-commit \.gr-ai-commit-label \{ display: none; \}/,
+    'narrow toolbars collapse the AI action to its icon + accessible label');
+  assert.match(appSource, /onAiCommitPush: function \(\) \{ runCommit\('aiCommitPush'\); \}/,
+    'the toolbar button runs the AI mode without changing the persisted drawer mode');
+  assert.match(appSource, /var canAiCommitPush = aiCommitReasons\.length === 0;/);
+  assert.match(appSource, /var runCommit = useCallback\(function \(modeOverride\) \{/);
+  assert.match(appSource, /var mode = modeOverride === 'aiCommitPush' \? 'aiCommitPush' : commitMode;/,
+    'the drawer split always runs the remembered mode');
+  // The toolbar contract exposes only the AI action, never the remembered mode.
+  const topBarStart = componentsSource.indexOf('function TopBar(');
+  const topBarEnd = componentsSource.indexOf('function ReviewTitle(', topBarStart);
+  const topBarSource = componentsSource.slice(topBarStart, topBarEnd);
+  for (const token of ['aiCommitButton', 'onAiCommitPush', 'gr-topbar-ai-commit']) {
+    assert.ok(topBarSource.includes(token), `TopBar must wire ${token}`);
+  }
+  for (const token of ['commitMode', 'onChangeCommitMode', 'gr-commit-target', 'CommitAction']) {
+    assert.equal(topBarSource.includes(token), false, `TopBar must not reference ${token}`);
+  }
+
+  // Clicking the primary half runs exactly the current action.
+  let runs = 0;
+  const clicked = render({ onCommit: function () { runs += 1; } });
+  clicked.find((element) => elementClasses(element).includes('gr-commit-main')).props.onClick();
+  assert.equal(runs, 1, 'the primary half runs the commit action');
+
+  // Blocking reasons keep the action disabled and are exposed through the
+  // tooltip (the reason lives in app.js because the state is cross-feature).
+  const blocked = render({ canRun: false, reasons: [t('commit.messageRequired')] });
+  const blockedMain = blocked.find((element) => elementClasses(element).includes('gr-commit-main'));
+  assert.equal(blockedMain.props.disabled, true);
+  assert.equal(blockedMain.props.title, t('actions.disabledReason', { reason: t('commit.messageRequired') }));
+  blockedMain.props.onClick();
+  assert.equal(runs, 1, 'a disabled primary half never dispatches');
+
+  // In-flight commit / AI drafting shows a spinner and disables both halves.
+  const busyElements = render({ busy: true });
+  const busyMain = busyElements.find((element) => elementClasses(element).includes('gr-commit-main'));
+  assert.equal(busyMain.props.disabled, true);
+  assert.equal(busyMain.props['aria-busy'], 'true');
+  assert.equal(typeof busyMain.props.children[0].type, 'function');
+  assert.equal(busyMain.props.children[0].type.name, 'Spinner');
+  assert.equal(busyElements.find((element) => elementClasses(element).includes('gr-commit-mode-chevron')).props.disabled, true);
+  // A drawer AI draft in flight is not a commit: the tooltip says so.
+  const generatingMain = render({ generating: true })
+    .find((element) => elementClasses(element).includes('gr-commit-main'));
+  assert.equal(generatingMain.props.disabled, true);
+  assert.equal(generatingMain.props.title, t('actions.disabledReason', { reason: t('commit.generating') }));
+
+  // The mode menu is rendered by the split action itself and anchored flush above
+  // the split control (open upward: the drawer sits at the window bottom), with
+  // the remembered mode checked.
+  const actionStart = componentsSource.indexOf('function CommitAction(');
+  const actionEnd = componentsSource.indexOf('function CommitPanel(', actionStart);
+  assert.ok(actionStart !== -1 && actionEnd > actionStart, 'CommitAction source region is discoverable');
+  const actionSource = componentsSource.slice(actionStart, actionEnd);
+  for (const token of ['checked: item.id === mode', 'ignoreRef: triggerRef',
+    "header: t('commit.modeHeader')", 'anchorRef: triggerRef',
+    "placement: 'above'", "align: 'end'"]) {
+    assert.ok(actionSource.includes(token), `CommitAction must wire ${token}`);
+  }
+  assert.match(actionSource, /setMenuOpen\(function \(value\) \{ return !value; \}\)/);
+  // Anchoring is computed from the measured trigger + menu, not an estimated
+  // height, so the menu stays 4px from the button like DSH's own menu buttons.
+  const anchored = components.anchorMenuPosition(
+    { left: 1200, right: 1300, top: 800, bottom: 828, width: 100, height: 28 },
+    { width: 220, height: 140 },
+    { placement: 'above', align: 'end', viewport: { width: 1600, height: 1026 } },
+  );
+  assert.deepEqual(anchored, { x: 1080, y: 656 });
+  assert.equal(800 - (anchored.y + 140), 4, 'the menu bottom stays 4px above the trigger');
+  assert.equal(anchored.x + 220, 1300, 'the menu right edge aligns with the trigger');
+  // Viewport edges: flip to the other side, then clamp inside the viewport.
+  const flipped = components.anchorMenuPosition(
+    { left: 0, right: 100, top: 100, bottom: 128, width: 100, height: 28 },
+    { width: 220, height: 140 },
+    { placement: 'above', align: 'end', viewport: { width: 1600, height: 1026 } },
+  );
+  assert.equal(flipped.x, 4, 'the menu left edge clamps inside the viewport');
+  assert.equal(flipped.y, 132, 'upward placement flips below when it does not fit');
+  const flippedUp = components.anchorMenuPosition(
+    { left: 1200, right: 1300, top: 900, bottom: 928, width: 100, height: 28 },
+    { width: 220, height: 140 },
+    { placement: 'below', align: 'end', viewport: { width: 1600, height: 1026 } },
+  );
+  assert.equal(flippedUp.y, 756, 'downward placement flips above when it does not fit');
+  assert.match(componentsSource, /anchorMenuPosition\(anchorNode\.getBoundingClientRect\(\), rect/,
+    'ContextMenu uses the anchored helper when a trigger ref is provided');
+  // The drawer menu holds only the two commit modes; the AI action is a toolbar
+  // button and must not creep back in as a hidden third drawer mode.
+  assert.equal(actionSource.includes("id: 'aiCommitPush'"), false,
+    'CommitAction must not expose the toolbar-only AI action as a drawer mode');
+
+  const menu = components.ContextMenu({
+    t,
+    open: true,
+    x: 10,
+    y: 10,
+    items: [
+      { id: 'commit', label: 'A', checked: true },
+      { id: 'commitPush', label: 'B', checked: false },
+    ],
+    onSelect: function () {},
+    onClose: function () {},
+  });
+  const radios = collectElements(menu).filter((element) => element.type === 'button' && element.props.role === 'menuitemradio');
+  assert.equal(radios.length, 2, 'the mode menu rows are radio menu items');
+  assert.equal(radios[0].props['aria-checked'], 'true');
+  assert.equal(radios[1].props['aria-checked'], 'false');
+  assert.equal(elementsByClass(menu, 'gr-menu-check').length, 1, 'only the active mode carries the check mark');
+  assert.match(componentsSource, /\[role\^="menuitem"\]/, 'keyboard traversal also covers menu radio items');
+
+  // Styling keeps the split-control and check-mark tiers in the theme sheet.
+  assert.match(stylesSource, /\.gr-commit-target \{[^}]*display: inline-flex/);
+  assert.match(stylesSource, /\.gr-commit-main \{/);
+  assert.match(stylesSource, /\.gr-commit-mode-chevron \{/);
+  // The split-control class names must not collide with the commit drawer's
+  // header chevron / message label (those are `.gr-commit-chevron` /
+  // `.gr-commit-label`); separate names keep both rule sets independent.
+  assert.match(stylesSource, /\.gr-commit-mode-label \{/);
+  assert.equal(/\.gr-commit-target[^{}]*\.gr-commit-label/.test(stylesSource), false);
+  // The split control clips children to its radius, so the focus ring must be
+  // painted inside the button box or keyboard focus would be invisible.
+  assert.match(stylesSource, /\.gr-commit-main:focus-visible, \.gr-commit-mode-chevron:focus-visible \{[^}]*outline-offset: -2px/);
+  assert.match(stylesSource, /\.gr-menu-check \{/);
+
+  // ---- persistence -------------------------------------------------------
+  assert.equal(typeof app.commitModeOf, 'function');
+  for (const [value, expected] of [['commit', 'commit'], ['commitPush', 'commitPush'],
+    ['aiCommitPush', 'commit'], ['push', 'commit'], [null, 'commit'], [undefined, 'commit']]) {
+    assert.equal(app.commitModeOf(value), expected, `commitModeOf(${String(value)})`);
+  }
+  assert.match(appSource, /commitMode: commitModeOf\(value && value\.commitMode\)/,
+    'settings bootstrap normalizes the new field');
+  assert.match(appSource, /if \('commitMode' in patch\) nextValue\.commitMode = commitModeOf\(patch\.commitMode\);/,
+    'the optimistic settings mirror applies the new field');
+  assert.match(appSource, /saveSettings\(\{ commitMode: value \}\)\.catch/,
+    'picking a mode persists it like the grouping choice');
+  assert.equal(componentsSource.includes('exports.CommitAction = CommitAction;'), true,
+    'CommitAction is exported for the drawer and for tests');
+
+  // ---- placement + wiring ------------------------------------------------
+  const appTopBarStart = appSource.indexOf('h(components.TopBar, {');
+  const appTopBarSource = appSource.slice(appTopBarStart, appSource.indexOf('var fileNav', appTopBarStart));
+  for (const token of ['commitMode', 'commitBusy', 'commitGenerating', 'commitCanRun',
+    'commitReasons', 'onCommit', 'onChangeCommitMode']) {
+    assert.equal(appTopBarSource.includes(token), false, `app.js must not pass ${token} to TopBar`);
+  }
+  for (const token of ['aiCommitBusy: aiCommitBusy,', 'aiCommitCanRun: canAiCommitPush,',
+    'aiCommitDisabledReason: aiCommitDisabledReason,', 'onAiCommitPush:']) {
+    assert.ok(appTopBarSource.includes(token), `app.js must pass ${token} to TopBar`);
+  }
+  const appDrawerStart = appSource.indexOf('h(components.CommitPanel, {');
+  const appDrawerSource = appSource.slice(appDrawerStart, appSource.indexOf('h(components.StatusBar, {', appDrawerStart));
+  for (const token of ['commitMode: commitMode,', 'commitBusy: commitBusy,',
+    'commitGenerating: commitGenerating,', 'commitCanRun: canCommit,',
+    'commitReasons: commitReasons,', 'onCommit: runCommit,', 'onChangeCommitMode:']) {
+    assert.ok(appDrawerSource.includes(token), `app.js must pass ${token} to CommitPanel`);
+  }
+  // The drawer wires the split action; the plain commit button stays gone.
+  const panelStart = componentsSource.indexOf('function CommitPanel(');
+  const panelEnd = componentsSource.indexOf('function PushDialog(', panelStart);
+  const panelSource = componentsSource.slice(panelStart, panelEnd);
+  for (const token of ['h(CommitAction, {', 'mode: props.commitMode',
+    'busy: !!props.commitBusy', 'onCommit: props.onCommit',
+    'onChangeMode: props.onChangeCommitMode']) {
+    assert.ok(panelSource.includes(token), `CommitPanel must wire ${token}`);
+  }
+  assert.match(stateSource, /commitMode: 'commit'/,
+    'the client settings mirror documents the documented default');
+  // Both mode labels are localized and differ between zh and en.
   for (const locale of ['zh', 'en']) {
-    const t = i18n.createI18n(locale).t;
-    for (const count of [0, 2, 60]) {
-      const tree = components.CommitPanel({
-        t,
-        open: true,
-        message: '',
-        count,
-        canCommit: count > 0,
-        reasons: [],
-        onToggle: () => {},
-        onMessageChange: () => {},
-        onCommit: () => {},
-      });
-      const elements = collectElements(tree);
-      const action = elements.find((element) => element.type === ui.Button
-        && element.props.variant === 'primary');
-      assert.ok(action, `${locale}/${count}: the commit action is rendered`);
-      assert.equal(action.props.children, t('commit.action'),
-        `${locale}/${count}: the action label is fixed`);
-      const label = String(action.props.children);
-      assert.equal(label.includes(String(count)), false,
-        `${locale}/${count}: the action label must not repeat the file count`);
-      assert.equal(/\d/.test(label), false, `${locale}/${count}: the action label carries no number`);
-
-      // The count is still visible in the always-present drawer header row.
-      const toggle = elements.find((element) => element.type === 'button'
-        && element.props.className === 'gr-commit-toggle');
-      assert.ok(toggle, `${locale}/${count}: the drawer header row is rendered`);
-      assert.ok(collectText(toggle).includes(t('commit.checkedFiles', { n: String(count) })),
-        `${locale}/${count}: the header row still shows how many files will be committed`);
+    for (const key of ['commit.mode', 'commit.modeHeader', 'commit.modeCommit', 'commit.modeCommitPush',
+      'commit.modeAiCommitPush', 'commit.modePushHint', 'commit.modeAiPushHint',
+      'commit.pushSuccess', 'commit.pushAfterCommitFailed']) {
+      assert.equal(typeof i18n.DICTIONARIES[locale][key], 'string', `${locale}: missing ${key}`);
+      assert.ok(i18n.DICTIONARIES[locale][key].length > 0, `${locale}: empty ${key}`);
     }
   }
+  assert.equal(i18n.DICTIONARIES.zh['commit.modeCommit'], '提交');
+  assert.equal(i18n.DICTIONARIES.en['commit.modeCommit'], 'Commit');
+  assert.notEqual(i18n.DICTIONARIES.zh['commit.modeAiCommitPush'], i18n.DICTIONARIES.en['commit.modeAiCommitPush']);
+  assert.ok(i18n.DICTIONARIES.zh['commit.modeAiCommitPush'].includes('AI'));
+  for (const key of ['commit.pushSuccess', 'commit.pushAfterCommitFailed']) {
+    assert.ok(i18n.DICTIONARIES.zh[key].includes('{'), `${key} interpolates its result`);
+    assert.ok(i18n.DICTIONARIES.en[key].includes('{'), `${key} interpolates its result`);
+  }
+
+  // ---- one-click commit+push chain (no push dialog) ----------------------
+  const runStart = appSource.indexOf('var runCommit = useCallback(');
+  const runEnd = appSource.indexOf('/* Push preview:', runStart);
+  assert.ok(runStart !== -1 && runEnd > runStart, 'runCommit source region is discoverable');
+  const runSource = appSource.slice(runStart, runEnd);
+  assert.match(runSource, /var messagePromise = mode === 'aiCommitPush' \? requestCommitMessage\(\) : Promise\.resolve\(commitMessage\);/,
+    'the AI mode drafts the message inside the same action');
+  assert.match(runSource, /rpc\.call\('commit', params\)\.then/);
+  assert.ok(runSource.indexOf("rpc.call('commit', params)") < runSource.indexOf("rpc.call('push', pushParams)"),
+    'the push starts only after the commit resolved');
+  assert.match(runSource, /var pushParams = \{ setUpstream: true \};/,
+    'the one-click push targets the current branch and its remote branch');
+  assert.match(runSource, /rpc\.call\('push', pushParams\)\.then/);
+  assert.equal(runSource.includes('pushPreview'), false, 'the one-click push must not open the push preview dialog');
+  assert.equal(runSource.includes('openPush'), false, 'the one-click push must not open the dialog state');
+  assert.match(appSource, /tRef\.current\('commit\.pushSuccess'/);
+  assert.match(appSource, /tRef\.current\('commit\.pushAfterCommitFailed'/);
+  // A failed commit still surfaces through the drawer's own error slot.
+  assert.match(appSource, /var showCommitFailure = useCallback\(function \(error\)/);
+  assert.match(appSource, /setCommitOpen\(true\);/);
+  // The AI draft request is shared by the drawer button and the combined mode.
+  assert.match(appSource, /var requestCommitMessage = useCallback\(/);
+  assert.match(appSource, /var messagePromise = mode === 'aiCommitPush' \? requestCommitMessage\(\)/);
 });
 
 test('AI commit message drafting is an explicit, cancellable read-only request', () => {

@@ -18,7 +18,7 @@ __def('components', function (exports, require, React) {
    *   FileNav          — grouped, filterable changed-file list with commit checkboxes.
    *   ContextMenu      — fixed-position keyboard-navigable menu.
    *   ConfirmDialog    — small confirmation dialog built on Modal.
-   *   CommitPanel      — collapsible commit message drawer (header + message box + AI draft action).
+   *   CommitPanel      — collapsible commit drawer (header + message box + AI draft + split commit action).
    *   PushDialog       — self-contained push dialog (own backdrop layer).
    *   PanelSettings    — in-panel settings page (AI grouping + interface).
    *   EmptyState       — centred empty/warn/error state.
@@ -484,7 +484,8 @@ __def('components', function (exports, require, React) {
    * panels instead of claiming a row of its own.
    *
    * Contract props: status, repo, busy, operation, onRefresh, onOpenPush,
-   * pushDisabledReason, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
+   * pushDisabledReason, aiCommitBusy, aiCommitCanRun, aiCommitDisabledReason,
+   * onAiCommitPush, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
    * onChangeGrouping(value), onReclassify, onCopy(value), onSetRemote, t.
    * Bulk staging (stage-all / unstage-all) lives in the FileNav header as the
    * tri-state select-all, where it shares the row/group checkbox model.
@@ -628,6 +629,28 @@ __def('components', function (exports, require, React) {
     var pushReason = props.pushDisabledReason || (busy ? t('reason.busy') : null);
     var pushTitle = pushDisabled ? disabledTitle(t, pushReason) : t('actions.push');
 
+    /* One-click AI·commit+push: reachable without expanding the commit drawer,
+     * so it lives next to (but separate from) the push-dialog button. The two
+     * actions are deliberately not merged: one opens the remote/target dialog,
+     * the other commits and pushes immediately, and hiding either behind a
+     * secondary menu would defeat its purpose. */
+    var aiCommitBusy = !!props.aiCommitBusy;
+    var aiCommitDisabled = aiCommitBusy || busy || props.aiCommitCanRun === false;
+    var aiCommitReason = busy ? t('reason.busy') : (props.aiCommitDisabledReason || null);
+    var aiCommitTitle = aiCommitDisabled ? disabledTitle(t, aiCommitReason) : t('commit.modeAiPushHint');
+    var aiCommitButton = h(Button, {
+      variant: 'default',
+      size: 'sm',
+      className: 'gr-topbar-ai-commit',
+      title: aiCommitTitle,
+      ariaLabel: t('commit.modeAiCommitPush'),
+      onClick: props.onAiCommitPush,
+      disabled: aiCommitDisabled,
+      busy: aiCommitBusy,
+      leading: h(IconSpark, { size: ICON_SIZE.md }),
+      t: t,
+    }, h('span', { className: 'gr-ai-commit-label' }, t('commit.modeAiCommitPush')));
+
     var canSelectGrouping = typeof props.onChangeGrouping === 'function';
     /* Three-way grouping selector (Git status / AI role / AI logic) built on the
      * shared Select so it looks like a DSH menu: a compact trigger with the
@@ -710,6 +733,7 @@ __def('components', function (exports, require, React) {
             t: t,
           }, h(IconRefresh, { size: ICON_SIZE.md })),
           h('span', { key: 'sep-push', className: 'gr-topbar-sep', 'aria-hidden': 'true' }),
+          aiCommitButton,
           h(Button, {
             variant: 'default',
             size: 'sm',
@@ -1160,11 +1184,48 @@ __def('components', function (exports, require, React) {
   /* ------------------------------------------------------------------ */
 
   /**
+   * Viewport-clamped top-left position for a menu anchored to its trigger.
+   * `anchor` / `menu` are DOMRect-like ({ left, right, top, bottom, width,
+   * height }); options are { placement: 'above'|'below', align:
+   * 'start'|'end', gap, viewport: { width, height } }. The preferred side wins
+   * when it fits; otherwise the menu flips before being clamped to the viewport.
+   * Keeping the menu flush with the anchor (4px gap by default) is what makes
+   * popovers read like DSH's own menu buttons instead of floating panels.
+   */
+  function anchorMenuPosition(anchor, menu, options) {
+    var opts = options || {};
+    var viewport = opts.viewport || { width: 1024, height: 768 };
+    var menuWidth = Math.max(0, Number(menu && menu.width) || 0);
+    var menuHeight = Math.max(0, Number(menu && menu.height) || 0);
+    var gap = Number.isFinite(opts.gap) ? Number(opts.gap) : 4;
+    var anchorTop = Number(anchor && anchor.top) || 0;
+    var anchorBottom = Number(anchor && anchor.bottom) || 0;
+    var anchorLeft = Number(anchor && anchor.left) || 0;
+    var anchorRight = Number(anchor && anchor.right) || 0;
+    var above = opts.placement !== 'below';
+    var x = opts.align === 'start' ? anchorLeft : anchorRight - menuWidth;
+    var y = above ? anchorTop - gap - menuHeight : anchorBottom + gap;
+    if (above && y < 4 && anchorBottom + gap + menuHeight <= viewport.height - 4) {
+      y = anchorBottom + gap;
+    } else if (!above && y + menuHeight > viewport.height - 4 && anchorTop - gap - menuHeight >= 4) {
+      y = anchorTop - gap - menuHeight;
+    }
+    return {
+      x: Math.round(clamp(x, 4, Math.max(4, viewport.width - menuWidth - 4))),
+      y: Math.round(clamp(y, 4, Math.max(4, viewport.height - menuHeight - 4))),
+    };
+  }
+
+  /**
    * Contract props: open, x, y, header, items [{id,label,disabled,title,
-   * danger,separator}], onSelect(id), onClose, t.
+   * danger,separator,checked}], onSelect(id), onClose, t.
    * Extra: `ignoreRef` — an element ref whose clicks must not count as
    * "outside"; used by toggle triggers so clicking them closes instead of
-   * close-then-reopen.
+   * close-then-reopen. `checked` renders a check mark and marks the row as a
+   * menu radio item (the commit-mode selector uses it for the remembered mode).
+   * `anchorRef` + `placement` ('above'|'below') + `align` ('start'|'end') anchor
+   * the menu to a trigger element instead of using the x/y pair; the commit
+   * drawer's mode menu uses this so it sits flush above the split control.
    */
   function ContextMenu(props) {
     var t = makeT(props.t);
@@ -1191,13 +1252,25 @@ __def('components', function (exports, require, React) {
       var rect = node.getBoundingClientRect();
       var width = typeof window !== 'undefined' ? window.innerWidth : rect.right;
       var height = typeof window !== 'undefined' ? window.innerHeight : rect.bottom;
-      var nextX = clamp(Number(props.x) || 0, 4, Math.max(4, width - rect.width - 4));
-      var nextY = clamp(Number(props.y) || 0, 4, Math.max(4, height - rect.height - 4));
+      var anchorNode = props.anchorRef && props.anchorRef.current;
+      var next;
+      if (anchorNode && typeof anchorNode.getBoundingClientRect === 'function') {
+        next = anchorMenuPosition(anchorNode.getBoundingClientRect(), rect, {
+          placement: props.placement === 'below' ? 'below' : 'above',
+          align: props.align === 'start' ? 'start' : 'end',
+          viewport: { width: width, height: height },
+        });
+      } else {
+        next = {
+          x: clamp(Number(props.x) || 0, 4, Math.max(4, width - rect.width - 4)),
+          y: clamp(Number(props.y) || 0, 4, Math.max(4, height - rect.height - 4)),
+        };
+      }
       setPosition(function (current) {
-        if (current.x === nextX && current.y === nextY) return current;
-        return { x: nextX, y: nextY };
+        if (current.x === next.x && current.y === next.y) return current;
+        return next;
       });
-    }, [open, props.x, props.y]);
+    }, [open, props.x, props.y, props.anchorRef, props.placement, props.align]);
 
     React.useEffect(function () {
       if (!open) return undefined;
@@ -1205,7 +1278,7 @@ __def('components', function (exports, require, React) {
       if (!doc) return undefined;
       var node = menuRef.current;
       if (node) {
-        var first = node.querySelector('[role="menuitem"]:not([aria-disabled="true"])');
+        var first = node.querySelector('[role^="menuitem"]:not([aria-disabled="true"])');
         focusNode(first);
       }
       function onOutside(event) {
@@ -1234,7 +1307,7 @@ __def('components', function (exports, require, React) {
       var node = menuRef.current;
       if (!node) return;
       event.preventDefault();
-      var items = Array.prototype.slice.call(node.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"])'));
+      var items = Array.prototype.slice.call(node.querySelectorAll('[role^="menuitem"]:not([aria-disabled="true"])'));
       if (items.length === 0) return;
       var active = typeof document !== 'undefined' ? document.activeElement : null;
       var index = items.indexOf(active);
@@ -1260,22 +1333,24 @@ __def('components', function (exports, require, React) {
         if (!item || typeof item !== 'object') return null;
         if (item.separator) return h('div', { key: 'sep-' + index, className: 'gr-menu-sep', role: 'separator' });
         var disabled = !!item.disabled;
+        var checked = item.checked === true;
         var icon = item.icon
           ? h('span', { className: 'gr-menu-icon', 'aria-hidden': 'true' }, item.icon)
           : null;
         return h('button', {
           key: item.id === undefined ? 'item-' + index : String(item.id),
           type: 'button',
-          role: 'menuitem',
+          role: item.checked === undefined ? 'menuitem' : 'menuitemradio',
           className: cx('gr-menu-item', item.danger && 'gr-menu-item-danger'),
           'aria-disabled': disabled ? 'true' : undefined,
+          'aria-checked': item.checked === undefined ? undefined : (checked ? 'true' : 'false'),
           title: item.title ? String(item.title) : undefined,
           onClick: function () {
             if (disabled) return;
             if (typeof props.onSelect === 'function') props.onSelect(item.id);
             if (typeof props.onClose === 'function') props.onClose();
           },
-        }, icon, item.label);
+        }, icon, item.label, checked ? h('span', { className: 'gr-menu-check', 'aria-hidden': 'true' }, h(IconCheck, { size: ICON_SIZE.md })) : null);
       })
     );
   }
@@ -1431,6 +1506,103 @@ __def('components', function (exports, require, React) {
   }
 
   /* ------------------------------------------------------------------ */
+  /* CommitAction                                                        */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Split commit action inside the commit drawer: the primary half runs the
+   * remembered commit mode, the chevron lists the two drawer modes (the
+   * selection is a persisted plugin setting, like the toolbar grouping
+   * selector). The one-click AI·commit+push action is a separate toolbar button,
+   * not a drawer mode. The menu opens upward because the drawer sits at the
+   * bottom of the review window.
+   *
+   * Contract props: t, mode ('commit'|'commitPush'), busy, generating, canRun,
+   * reasons [string], onCommit, onChangeMode.
+   */
+  function CommitAction(props) {
+    var t = makeT(props.t);
+    var mode = props.mode === 'commitPush' ? props.mode : 'commit';
+    var busy = !!props.busy;
+    var generating = !!props.generating;
+    var reasons = Array.isArray(props.reasons) ? props.reasons : [];
+    var running = busy || generating;
+    var menuState = React.useState(false);
+    var menuOpen = menuState[0];
+    var setMenuOpen = menuState[1];
+    var triggerRef = React.useRef(null);
+    var modes = [
+      { id: 'commit', label: t('commit.modeCommit'), hint: t('commit.onlyStaged'), icon: h(IconCommit, { size: ICON_SIZE.md }) },
+      { id: 'commitPush', label: t('commit.modeCommitPush'), hint: t('commit.modePushHint'), icon: h(IconPush, { size: ICON_SIZE.md }) },
+    ];
+    var active = modes[0];
+    for (var index = 0; index < modes.length; index += 1) {
+      if (modes[index].id === mode) active = modes[index];
+    }
+    var disabled = running || props.canRun === false;
+    var disabledReason = busy
+      ? t('commit.running')
+      : (generating ? t('commit.generating') : (reasons[0] || null));
+    var title = disabled ? disabledTitle(t, disabledReason) : active.hint;
+
+    function toggleMenu() {
+      setMenuOpen(function (value) { return !value; });
+    }
+
+    function choose(id) {
+      setMenuOpen(false);
+      if (id !== mode && typeof props.onChangeMode === 'function') props.onChangeMode(String(id));
+    }
+
+    return h(React.Fragment, null,
+      h('span', { className: 'gr-commit-target', ref: triggerRef },
+        h('button', {
+          type: 'button',
+          className: 'gr-commit-main',
+          title: title,
+          'aria-label': active.label,
+          'aria-busy': running ? 'true' : undefined,
+          disabled: disabled ? true : undefined,
+          onClick: function () {
+            if (disabled) return;
+            setMenuOpen(false);
+            if (typeof props.onCommit === 'function') props.onCommit();
+          },
+        },
+          running ? h(Spinner, { size: 11 }) : active.icon,
+          h('span', { className: 'gr-commit-mode-label' }, active.label)),
+        h('button', {
+          type: 'button',
+          className: 'gr-commit-mode-chevron',
+          title: t('commit.mode'),
+          'aria-label': t('commit.mode'),
+          'aria-haspopup': 'menu',
+          'aria-expanded': menuOpen ? 'true' : 'false',
+          disabled: running ? true : undefined,
+          onClick: toggleMenu,
+        }, h(IconChevronDown, { size: ICON_SIZE.md }))),
+      menuOpen
+        ? h(ContextMenu, {
+          open: true,
+          /* Anchored like DSH's file-explorer menu: flush above the split control
+           * (4px gap) and right-aligned to it, so it does not float away from the
+           * trigger; the helper flips/clamps only when the viewport is too tight. */
+          anchorRef: triggerRef,
+          placement: 'above',
+          align: 'end',
+          header: t('commit.modeHeader'),
+          items: modes.map(function (item) {
+            return { id: item.id, label: item.label, title: item.hint, checked: item.id === mode };
+          }),
+          onSelect: choose,
+          onClose: function () { setMenuOpen(false); },
+          ignoreRef: triggerRef,
+          t: t,
+        })
+        : null);
+  }
+
+  /* ------------------------------------------------------------------ */
   /* CommitPanel                                                         */
   /* ------------------------------------------------------------------ */
 
@@ -1440,19 +1612,19 @@ __def('components', function (exports, require, React) {
    * the commit message and the actions. The header row (title + checked-file
    * count + expand toggle) is always visible; the body opens on demand and
    * holds a multi-line message field, warnings, the AI draft action and the
-   * commit action. There is deliberately no keyboard shortcut: the message is
-   * committed with the button only.
+   * split commit action (its mode is persisted). There is deliberately no
+   * keyboard shortcut: the message is committed from the split action only.
    *
    * Contract props: open, onToggle, message, onMessageChange, count, busy,
-   * canCommit, canGenerate, generateBusy, reasons [string], error,
-   * conflictCount, staleNotice, onCommit, onGenerate, t.
+   * canGenerate, generateBusy, commitMode, commitBusy, commitGenerating,
+   * commitCanRun, commitReasons [string], error, conflictCount, staleNotice,
+   * onGenerate, onCommit, onChangeCommitMode, t.
    */
   function CommitPanel(props) {
     var t = makeT(props.t);
     var open = !!props.open;
     var message = props.message === undefined || props.message === null ? '' : String(props.message);
     var count = Number(props.count) || 0;
-    var reasons = Array.isArray(props.reasons) ? props.reasons : [];
     var textareaRef = React.useRef(null);
     var previousOpen = React.useRef(false);
 
@@ -1462,11 +1634,6 @@ __def('components', function (exports, require, React) {
     }, [open]);
 
     var generateBusy = !!props.generateBusy;
-    var commitTitle = !props.canCommit
-      ? disabledTitle(t, reasons[0] || t('reason.nothingToCommit'))
-      : generateBusy
-        ? t('commit.generating')
-        : t('commit.onlyStaged');
     var conflictBlocked = Number(props.conflictCount) > 0;
 
     return h('div', { className: cx('gr-commit', open && 'gr-commit-open') },
@@ -1513,15 +1680,16 @@ __def('components', function (exports, require, React) {
             onClick: props.onGenerate,
             t: t,
           }, h(IconSpark, { size: ICON_SIZE.md })),
-          h(Button, {
-            variant: 'primary',
-            onClick: props.onCommit,
-            busy: !!props.busy,
-            disabled: !props.canCommit || generateBusy,
-            title: commitTitle,
-            busyLabel: t('commit.running'),
+          h(CommitAction, {
             t: t,
-          }, t('commit.action'))
+            mode: props.commitMode,
+            busy: !!props.commitBusy,
+            generating: !!props.commitGenerating,
+            canRun: props.commitCanRun,
+            reasons: props.commitReasons,
+            onCommit: props.onCommit,
+            onChangeMode: props.onChangeCommitMode,
+          })
         )
       )
     );
@@ -1663,12 +1831,12 @@ __def('components', function (exports, require, React) {
             ? h('div', { className: 'gr-push-loading gr-push-failed' }, errorBox)
             : h('div', { className: 'gr-push-body' },
               h('div', { className: 'gr-push-flow' },
-                h('div', { className: 'gr-field' },
+                h('div', { className: 'gr-field gr-push-field-local' },
                   h('span', { className: 'gr-field-label' }, t('push.localBranch')),
                   h('span', { className: 'gr-field-value gr-mono', title: sourceBranch }, sourceBranch || t('common.unknown'))
                 ),
                 h('span', { className: 'gr-push-arrow', 'aria-hidden': 'true' }, h(IconArrowRight, { size: ICON_SIZE.md })),
-                h('div', { className: 'gr-field' },
+                h('div', { className: 'gr-field gr-push-field-remote' },
                   h('span', { className: 'gr-field-label' }, t('push.remote')),
                   remotes.length === 0
                     ? h('span', { className: 'gr-field-value gr-dim' }, t('common.none'))
@@ -1684,7 +1852,7 @@ __def('components', function (exports, require, React) {
                     })
                 ),
                 h('span', { className: 'gr-push-arrow', 'aria-hidden': 'true' }, '/'),
-                h('div', { className: 'gr-field' },
+                h('div', { className: 'gr-field gr-push-field-target' },
                   h('span', { className: 'gr-field-label' }, t('push.targetBranch')),
                   h(TextField, {
                     type: 'text',
@@ -2621,9 +2789,11 @@ __def('components', function (exports, require, React) {
   exports.ReviewTitle = ReviewTitle;
   exports.FileNav = FileNav;
   exports.ContextMenu = ContextMenu;
+  exports.anchorMenuPosition = anchorMenuPosition;
   exports.OpenTargetButton = OpenTargetButton;
   exports.ConfirmDialog = ConfirmDialog;
   exports.CommitPanel = CommitPanel;
+  exports.CommitAction = CommitAction;
   exports.PushDialog = PushDialog;
   exports.RemoteDialog = RemoteDialog;
   exports.PanelSettings = PanelSettings;

@@ -16,7 +16,7 @@
 - **真实 Git 状态**：所有仓库读取都调用本机 `git` CLI；界面展示的永远是最近一次读取到的 Git 输出，不做前端推测。
 - **先校验后写入**：每个写操作在真正执行前重新读取仓库、重新计算内容指纹，与客户端出示的预期不一致就中止。
 - **最小协议面**：Host 与 Client 之间只有 19 个方法与一组封闭的数据形状，边界集中在一处可审计。
-- **AI 只做辅助**：AI 归类只改变左侧文件列表的分组方式，不触碰 Git 状态、比较基准或操作范围；AI 生成提交信息只把草稿写进可编辑的提交信息框，不提交、不暂存、不改变任何仓库状态。
+- **AI 只做辅助**：AI 归类只改变左侧文件列表的分组方式，不触碰 Git 状态、比较基准或操作范围；AI 生成提交信息本身只把草稿写进可编辑的提交信息框，不提交、不暂存。只有用户显式点击工具栏的「AI·提交并推送」按钮时，生成的草稿才作为随后提交与推送的输入，且每一步仍是显式的 Git 写操作。
 - **零依赖、确定性构建**：没有依赖安装步骤；`client.js` 的构建输出逐字节确定，产物提交进仓库并随包发布。
 
 ## 2. 进程与参与者
@@ -81,14 +81,15 @@ flowchart LR
 | `src/client/open-in-app.js` | 复用 DSH 的 open-in-app：目录应用目录与启动请求，以及 `remote.session` 的打开 / 显示位置调用 | 不自己起进程；`remote.session` 通过可选 `ctx.get` 获取，不可用时只隐藏文件级动作 |
 | `src/client/diff.js` | 纯 diff 模型：并排行构建、折叠区、语法高亮、变更锚点与导航 | 无 React、无 DOM，可在 Node 中直接测试 |
 | `src/client/diff-view.js` | `DiffPane` 渲染器：虚拟化滚动、行号、横向独立滚动、minimap、紧凑变更计数（完整文案在 tooltip 与屏幕阅读器文本中）、变更块菜单 | 消费 `diff.js` 的模型，不重新计算 diff |
-| `src/client/components.js` | 组合组件：TopBar（分支信息菜单 + 变更摘要）、StatusBar（常驻底栏）、FileNav（含提交勾选框与标题行三态全选）、菜单/对话框、提交抽屉（含 AI 草稿按钮）、推送对话框、窗口内设置（基础元素来自 `ui.js`） | 对话框接受 `scoped` 模式：`scoped` 时只覆盖所在窗口并只在窗口内捕获焦点，未指定时沿用整页对话框行为；不做请求；状态与回调由 `app.js` 传入 |
+| `src/client/components.js` | 组合组件：TopBar（分支信息菜单 + 变更摘要）、StatusBar（常驻底栏）、FileNav（含提交勾选框与标题行三态全选）、菜单/对话框、提交抽屉（含 AI 草稿按钮与 split 提交控件）、推送对话框、窗口内设置（基础元素来自 `ui.js`） | 对话框接受 `scoped` 模式：`scoped` 时只覆盖所在窗口并只在窗口内捕获焦点，未指定时沿用整页对话框行为；不做请求；状态与回调由 `app.js` 传入 |
 | `src/client/app.js` | 窗口层与窗口状态机、窗口外壳（拖动 / 缩放 / 最小化 / 最大化）、视口几何钳制、按窗口作用域的键盘交互与窗口内对话框、请求编排、插槽注册与 `apply(ctx)` | 暴露 `apply` 与 `inject: ['slots']`；是唯一注册插槽的模块；键盘监听挂在窗口根 DOM 节点而不是 `document` |
 
 客户端源码的拼接顺序固定为 `util → i18n → state → rpc → open-in-app → diff → diff-view → styles → ui → components → app`，`app` 必须是最后一个。规则与理由见 [protocol.md](./protocol.md) 第 2 节与 [development.md](./development.md) 第 5 节。
 
 ### 4.1 工具栏、文件导航与常驻状态栏
 
-- **`TopBar`**：左端的分支 chip 是按钮（`gr-branch-trigger`），点击展开菜单；菜单行由 `branchMenuItems(repo, t)` 从 `RepoRef` 的 `headSha` / `upstream` / `ahead` / `behind` / `branch` / `detached` 生成，复制动作通过 `app.js` 传入的 `onCopy` 写入剪贴板，成功后以 notice 回到状态栏；「设置远程仓库…」通过 `onSetRemote` 打开 `RemoteDialog`，保存时调用 `remoteSet`（本地 Git 配置写入，协议见 [protocol.md](./protocol.md)）。它**不提供分支切换**。中段是 `StatusPayload.summary` 派生的变更摘要（图标由 `statusGlyph` 渲染，保留颜色语义与文字标签）。右端的第一个控件是**分组方式选择器**（`ui.Select`，三选一：Git 状态 / AI 归类 · 按职能 / AI 归类 · 按功能逻辑；价值 `git` / `role` / `logic`，菜单项带说明 tooltip 与当前项勾选，触发文案为当前模式），由 `onChangeGrouping` 写入 `{ aiClassify, aiGrouping }` 设置；选择器选中两个 AI 模式之一时右侧出现「重新归类」（`IconLayers` 图层图标，与刷新的 `IconRefresh` 区分）。选择器使用 `Select` 的 `anchorMenu` 模式把 listbox 绝对定位在触发根节点内，而不是 viewport-fixed：`.gr-topbar` 是 `container-type: inline-size` 的尺寸容器，fixed 后代会被它包含 / 裁剪。分支 popover 与工具栏 `header` 是兄弟节点而不是子节点，原因相同。
+- **`TopBar`**：左端的分支 chip 是按钮（`gr-branch-trigger`），点击展开菜单；菜单行由 `branchMenuItems(repo, t)` 从 `RepoRef` 的 `headSha` / `upstream` / `ahead` / `behind` / `branch` / `detached` 生成，复制动作通过 `app.js` 传入的 `onCopy` 写入剪贴板，成功后以 notice 回到状态栏；「设置远程仓库…」通过 `onSetRemote` 打开 `RemoteDialog`，保存时调用 `remoteSet`（本地 Git 配置写入，协议见 [protocol.md](./protocol.md)）。它**不提供分支切换**。中段是 `StatusPayload.summary` 派生的变更摘要（图标由 `statusGlyph` 渲染，保留颜色语义与文字标签）。右端的第一个控件是**分组方式选择器**（`ui.Select`，三选一：Git 状态 / AI 归类 · 按职能 / AI 归类 · 按功能逻辑；价值 `git` / `role` / `logic`，菜单项带说明 tooltip 与当前项勾选，触发文案为当前模式），由 `onChangeGrouping` 写入 `{ aiClassify, aiGrouping }` 设置；选择器选中两个 AI 模式之一时右侧出现「重新归类」（`IconLayers` 图层图标，与刷新的 `IconRefresh` 区分）。选择器使用 `Select` 的 `anchorMenu` 模式把 listbox 绝对定位在触发根节点内，而不是 viewport-fixed：`.gr-topbar` 是 `container-type: inline-size` 的尺寸容器，fixed 后代会被它包含 / 裁剪。分支 popover 与工具栏 `header` 是兄弟节点而不是子节点，原因相同。刷新按钮之后依次是：独立的 **「AI·提交并推送」按钮**（`.gr-topbar-ai-commit`，无需展开提交抽屉，一次点击完成 AI 草稿 → 提交 → 推送，不打开推送对话框；窄窗口下只显示 spark 图标 + tooltip / aria-label）与 **「推送」按钮**（打开 `PushDialog`，可选择远程 / 目标分支）。两个动作不合并成一个多选项按钮：一个直接提交并推送当前分支，另一个打开对话框选择远程 / 目标和待推送提交，合并会隐藏一键操作或让会提交的动作成为默认点击。
+- **`CommitPanel`（底部提交抽屉）**：展开后包含提交信息框、AI 草稿按钮与 **split 提交控件**（`.gr-commit-target`）。主按钮（`.gr-commit-main`，内部标签 `.gr-commit-mode-label`）执行 `commitMode` 选中的方式并显示其本地化名称与图标，chevron（`.gr-commit-mode-chevron`）打开二选一菜单（**提交** / **提交并推送**，当前项带勾选）。菜单由 `CommitAction` 用 `ContextMenu` 渲染，因为抽屉位于窗口底部而向上展开，而不是放进抽屉的滚动区域。选择只保存 `commitMode` 设置（`'commit' | 'commitPush'`，默认 `'commit'`；早期版本的 `'aiCommitPush'` 按未知值回退）、不立即执行；该设置与工具栏分组选择一样经 `settingsSet` 持久化，因此重开窗口 / 刷新页面后保持。抽屉的 AI 草稿按钮只填输入框；「AI·提交并推送」是工具栏的独立动作，不是抽屉模式。
 - **`FileNav` 标题行三态全选**：作用域来自 `app.js` 传入的 `groups`（搜索过滤 / AI 分组之后的 `visibleGroups`；无搜索时覆盖全部条目），统计时排除 `conflict`；`allStaged` / `someStaged` 决定勾选与半选，无条目、`busy` 或 `selectAllDisabledReason`（Host 截断时为 `reason.truncated`）时禁用。点击调用 `onToggleAllStaged(entries, next)`，在 `app.js` 里复用 `toggleGroupStaged`：勾选只 `stage` 未暂存项、取消勾选只 `unstage` 已暂存项，仍走同一套指纹校验；**没有新增协议**。工具栏的批量暂存按钮已删除，批量能力只保留在这一处。标题行与文件行对齐：leading 固定 14px，trailing 用 `FileNav` 实测的滚动条 gutter（`--gr-files-scrollbar`，来自列表 `offsetWidth - clientWidth`）减去批量图标内缩，使最右侧图标的可见边缘落在文件行背景的右边缘上；列表保持 `scrollbar-gutter: stable`。
 - **`StatusBar`**：仓库状态可读（`status.state === 'ok'`）时始终渲染，忙碌 / 错误 / 通知期间同样显示。左侧依次是忙碌（`busy` + `operation`）、可关闭错误（`error`）、操作通知（`notice`）与「就绪」；就绪点的 tooltip 用 `StatusPayload.generatedAt` 格式化为本地时间。右侧摘要来自 `StatusPayload.repo` 与 `StatusPayload.summary`；宽度不足时由 `@container gr-statusbar` 先隐藏未跟踪 / 冲突，再收起整个摘要。原先单独的刷新错误条已并入这里（`refreshError` / `operationError` 作为 `error` 传入）。
 - 以上状态栏 / 摘要 / 文件导航数据仍来自既有的 `StatusPayload` / `RepoRef`（分支菜单里的「设置远程仓库…」是单独的 `remoteSet` 写方法，见 [protocol.md](./protocol.md) 第 4 节）；数据形状见 [protocol.md](./protocol.md) 第 5 节。
@@ -147,13 +148,13 @@ sequenceDiagram
 4. 回复被解析为分类结构，并对照真实条目集合校验：未知 id 丢弃，未归类条目进入「其他变更」；逻辑模式下名为 `NON_FUNCTIONAL` 的分类被标记为 `kind: "non-functional"`，客户端把它本地化为「非功能变更」并保留模型给的一句话说明作为 tooltip。
 5. 客户端把回复里的 entry key 经发送时记录的 key→path 表转换成路径分类（`aiPathGroups`），导航再按路径把当前条目映射进组（`aiGroups`）；同一文件在 staged / unstaged 之间切换后 key 变了、path 不变，因此仍留在原组，不会掉进「其他变更」。切换 AI 模式会取消进行中的请求并丢弃旧模式的回复，然后按新模式重新请求。失败时回退为按 Git 状态分组。结果按「仓库 + 模型 + 分组模式 + 条目指纹」缓存于 Host 内存。
 
-### 5.4 AI 生成提交信息
+### 5.4 AI 生成提交信息（草稿与一步提交）
 
-1. 用户在展开的提交区点击 sparkles 图标按钮。按钮只在「有已暂存条目、无未解决冲突、列表未被截断」时可用（与提交按钮的阻止原因一致，但不要求提交信息非空）。
+1. 有两个入口：提交抽屉里的 sparkles 图标按钮（只生成草稿），以及顶部工具栏的独立「AI·提交并推送」按钮（生成 → 提交 → 推送一步完成，不需要展开抽屉）。两种入口都只在「有已暂存条目、无未解决冲突、列表未被截断」时可用；一步提交另要求仓库有可用远程且不是分离 HEAD。
 2. 客户端只发送 `{ requestId, sessionId? }` 调用 `commitMessage`；Host 重新读取状态、取已暂存条目，并在同一次请求里只读地取两份输入：`git diff --cached`（有界 patch）与 `git log`（最近 20 条提交的 subject / 正文摘录）。
 3. Host 用与 AI 归类相同的有效模型路由与推理档位调用一次 `llm.stream`（温度 0、45 秒超时、可取消）。提示词先按 `history.language`（由最近提交 subject 的主要语言算出：`en` / `zh` / `mixed` / `unknown`）锁定标题与正文语言，再优先沿用仓库历史提交格式；没有历史或看不出稳定格式时使用 Conventional Commits `type(scope): 摘要`，多个独立细节用 `- ` 列表写在标题下。
-4. 回复按纯文本整理（去代码块围栏、去“提交信息：”之类前缀、规范空行、≤ 4000 字符），返回 `{ message, model, history, repo }`；客户端把 `message` 写进可编辑的提交信息框，由用户确认后手动提交。
-5. 任何失败都只返回错误封套，不写 Git 状态、不改动已暂存内容；折叠提交区、关闭窗口或再次生成会取消请求（`commitMessageCancel`）。该动作与 AI 归类互相独立，不依赖 `aiClassify` 开关。
+4. 回复按纯文本整理（去代码块围栏、去“提交信息：”之类前缀、规范空行、≤ 4000 字符），返回 `{ message, model, history, repo }`。草稿按钮把 `message` 写进可编辑的提交信息框，由用户确认后再用 split 提交控件提交；工具栏的「AI·提交并推送」把 `message` 直接作为 `commit` 的提交信息，成功后清空输入框并调用 `push`（`setUpstream: true`，当前本地分支 → 其上游 / 默认远程 + 同名分支，不打开推送对话框）。
+5. 任何生成失败都只返回错误封套，不写 Git 状态、不改动已暂存内容；折叠提交区、关闭窗口或再次生成会取消请求（`commitMessageCancel`）。一步提交中提交失败不推送并展开提交区显示原因；提交成功而推送失败时保留提交并在状态栏说明。该动作与 AI 归类互相独立，不依赖 `aiClassify` 开关。
 
 ## 6. 写安全不变量
 
@@ -169,6 +170,7 @@ sequenceDiagram
 | 提交预期 | 提交携带 `{ headSha, stagedFingerprint }`，`stagedFingerprint` 覆盖完整 index（`git ls-files -s`），Host 重新推导后不一致即返回 `commit/stale`；提交信息经 stdin 传入，钩子与签名照常生效 |
 | 只提交暂存区 | 存在冲突或暂存区为空时拒绝提交；不会自动暂存 |
 | 推送不强制 | 源分支固定为当前本地分支，显式 refspec 为 `refs/heads/<source>:refs/heads/<target>`，`setUpstream` 时加 `-u`，永不传 `--force`；预览比较 `refs/remotes/<remote>/<target>` |
+| 一步提交 + 推送不是事务 | 「提交并推送」由 `app.js` 先 `commit`、成功后再 `push`，两笔写各自走同一写链与各自的写前校验；推送失败不会回滚已提交的 commit，界面必须明确说明“提交成功、推送失败” |
 | 明文日志 | 未预期异常的原始 message/堆栈只写 Host 日志；线上只返回稳定的 `internal` 与安全 details。客户端按 `error.code` 显示本地化文案 |
 | 不做乐观更新 | 写操作成功后返回重新读取的 `StatusPayload`，客户端用它替换本地快照 |
 | 路径安全 | 路径作为 argv 值传入，Executor 的 `literal` 选项为所有按路径调用注入 `GIT_LITERAL_PATHSPECS=1`，文件名不会被当作选项、glob 或 pathspec 魔法 |

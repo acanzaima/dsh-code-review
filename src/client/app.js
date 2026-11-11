@@ -404,11 +404,21 @@ __def('app', function (exports, require, React) {
   // ---------------------------------------------------------------------------
   // Plugin settings bootstrap (git groups vs AI groups, locale, limits)
   // ---------------------------------------------------------------------------
+  /**
+   * Persisted commit mode of the drawer's split commit control. Unknown values
+   * (an older settings file, the retired 'aiCommitPush' mode) fall back to the
+   * plain commit.
+   */
+  function commitModeOf(value) {
+    return value === 'commitPush' ? 'commitPush' : 'commit';
+  }
+
   /** Normalise the settings value carried in the client store. */
   function pickSettingsValue(value) {
     var result = {
       aiClassify: value && value.aiClassify === true,
       aiGrouping: value && value.aiGrouping === 'logic' ? 'logic' : 'role',
+      commitMode: commitModeOf(value && value.commitMode),
       preclassify: value && value.preclassify === true,
       maxCandidates: value && Number.isFinite(value.maxCandidates) ? value.maxCandidates : 50,
     };
@@ -486,13 +496,14 @@ __def('app', function (exports, require, React) {
     if (!rpc) return Promise.resolve();
     state.settingsStore.set(function (current) {
       var nextValue = {};
-      var keys = ['aiClassify', 'aiGrouping', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
+      var keys = ['aiClassify', 'aiGrouping', 'commitMode', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
       for (var index = 0; index < keys.length; index += 1) {
         if (current.value && current.value[keys[index]] !== undefined) nextValue[keys[index]] = current.value[keys[index]];
       }
       if (patch) {
         if ('aiClassify' in patch) nextValue.aiClassify = patch.aiClassify === true;
         if ('aiGrouping' in patch) nextValue.aiGrouping = patch.aiGrouping === 'logic' ? 'logic' : 'role';
+        if ('commitMode' in patch) nextValue.commitMode = commitModeOf(patch.commitMode);
         if ('preclassify' in patch) nextValue.preclassify = patch.preclassify === true;
         if ('maxCandidates' in patch) nextValue.maxCandidates = patch.maxCandidates;
         if ('provider' in patch) {
@@ -1355,23 +1366,53 @@ __def('app', function (exports, require, React) {
     }, [cancelAiRequest]);
 
     // ---- commit / push ------------------------------------------------------
+    /* The commit mode chosen in the drawer's split control is persisted next to
+     * the other plugin settings; the main half of the control runs it. The
+     * one-click AI·commit+push action lives in the top toolbar instead: it must
+     * be reachable without expanding the drawer and is not a persisted mode. */
+    var commitMode = commitModeOf(settingsSnapshot.value.commitMode);
+
+    var pushDisabledReason = '';
+    if (!snapshot || !snapshot.repo) pushDisabledReason = t('reason.noRepo');
+    else if (!snapshot.repo.remotes || snapshot.repo.remotes.length === 0) pushDisabledReason = t('reason.noRemote');
+    else if (snapshot.repo.detached) pushDisabledReason = t('reason.detached');
+
     var stagedEntries = useMemo(function () {
       return entries.filter(function (entry) { return entry.status === 'staged'; });
     }, [entries]);
 
-    var commitReasons = useMemo(function () {
-      var reasons = [];
-      if (truncated) reasons.push(t('reason.truncated'));
-      if (conflictCount > 0) reasons.push(t('commit.conflictBlocked'));
-      if (stagedEntries.length === 0) reasons.push(t('commit.nothingChecked'));
-      if (commitMessage.trim().length === 0) reasons.push(t('commit.messageRequired'));
-      return reasons;
-    }, [truncated, conflictCount, stagedEntries.length, commitMessage, t]);
+    /* Guards shared by the drawer commit split and the toolbar AI action: the
+     * commit set must be previewable and the index must hold something. */
+    var commitBaseReasons = [];
+    if (truncated) commitBaseReasons.push(t('reason.truncated'));
+    if (conflictCount > 0) commitBaseReasons.push(t('commit.conflictBlocked'));
+    if (stagedEntries.length === 0) commitBaseReasons.push(t('commit.nothingChecked'));
 
-    var canCommit = !truncated && conflictCount === 0 && stagedEntries.length > 0 && commitMessage.trim().length > 0;
-    /* The AI draft action only needs staged content: the message field may be
-     * empty (that is the point) and the user can still edit the draft. Its
-     * tooltip is the action name only — no reason breakdown. */
+    /* Drawer modes commit the editable message; '提交并推送' also pushes without
+     * opening the push dialog, so a missing remote / detached HEAD must block it
+     * up front instead of failing after the commit. */
+    var commitReasons = commitBaseReasons.slice();
+    if (commitMessage.trim().length === 0) commitReasons.push(t('commit.messageRequired'));
+    if (commitMode === 'commitPush' && pushDisabledReason) commitReasons.push(pushDisabledReason);
+
+    var canCommit = commitBaseReasons.length === 0
+      && commitMessage.trim().length > 0
+      && (commitMode === 'commit' || !pushDisabledReason);
+
+    /* The toolbar AI action drafts its own message, so it needs neither the
+     * drawer nor a typed message; it does need a usable push target. */
+    var aiCommitReasons = commitBaseReasons.slice();
+    if (pushDisabledReason) aiCommitReasons.push(pushDisabledReason);
+    var canAiCommitPush = aiCommitReasons.length === 0;
+    var aiCommitBusy = commitBusy || commitGenerating;
+    var aiCommitDisabledReason = commitBusy
+      ? t('commit.running')
+      : commitGenerating
+        ? t('commit.generating')
+        : (aiCommitReasons[0] || null);
+    /* The AI draft action in the drawer only needs staged content: the message
+     * field may be empty (that is the point) and the user can still edit the
+     * draft. Its tooltip is the action name only — no reason breakdown. */
     var canGenerate = !truncated && conflictCount === 0 && stagedEntries.length > 0;
 
     /* AI commit-message draft: an explicit, read-only action. Aborting the
@@ -1396,20 +1437,26 @@ __def('app', function (exports, require, React) {
       setCommitGenerating(false);
     }, [abortCommitGeneration]);
 
-    var generateCommitMessage = useCallback(function () {
+    /* Shared AI draft request used by the drawer's draft button and by the
+     * AI·commit+push toolbar action. One in-flight request at a time; resolves
+     * with the plain-text message or rejects with the host error (an aborted or
+     * superseded request rejects with an AbortError). */
+    var requestCommitMessage = useCallback(function () {
       var rpc = state.runtime.rpc;
-      if (!rpc || commitBusyRef.current) return;
+      if (!rpc) return Promise.reject(new Error('rpc unavailable'));
       var current = snapshotRef.current;
-      if (!current || !current.repo) return;
+      if (!current || !current.repo) return Promise.reject(new Error('repository missing'));
       var summary = current.summary || {};
       var list = Array.isArray(current.entries) ? current.entries : [];
       var stagedCount = 0;
       for (var index = 0; index < list.length; index += 1) {
         if (list[index] && list[index].status === 'staged') stagedCount += 1;
       }
-      /* Re-check the same guards the button uses against the live snapshot:
-       * a reply for a change set the user already refreshed away is useless. */
-      if (summary.truncated || (summary.conflicts || 0) > 0 || stagedCount === 0) return;
+      /* Re-check the same guards the action uses against the live snapshot: a
+       * reply for a change set the user already refreshed away is useless. */
+      if (summary.truncated || (summary.conflicts || 0) > 0 || stagedCount === 0) {
+        return Promise.reject({ code: 'message/no-staged' });
+      }
       abortCommitGeneration();
       var generation = targetGenerationRef.current;
       var requestId = util.uid('message');
@@ -1419,27 +1466,42 @@ __def('app', function (exports, require, React) {
       setCommitError(null);
       var params = { requestId: requestId };
       if (sessionId) params.sessionId = sessionId;
-      rpc.call('commitMessage', params, { signal: controller.signal }).then(function (value) {
-        if (generation !== targetGenerationRef.current) return;
-        if (commitGenerateRef.current.id !== requestId || controller.signal.aborted) return;
+      return rpc.call('commitMessage', params, { signal: controller.signal }).then(function (value) {
+        if (generation !== targetGenerationRef.current
+          || commitGenerateRef.current.id !== requestId
+          || controller.signal.aborted) {
+          var superseded = new Error('commit message request superseded');
+          superseded.name = 'AbortError';
+          throw superseded;
+        }
         commitGenerateRef.current = { id: null, controller: null };
         setCommitGenerating(false);
         var message = value && typeof value.message === 'string' ? value.message : '';
-        if (message.trim().length === 0) {
-          setCommitError({ message: tRef.current('error.messageInvalid') });
-          return;
+        if (message.trim().length === 0) throw { code: 'message/invalid' };
+        return message;
+      }).catch(function (error) {
+        if (commitGenerateRef.current.id === requestId) {
+          commitGenerateRef.current = { id: null, controller: null };
+          setCommitGenerating(false);
         }
+        throw error;
+      });
+    }, [abortCommitGeneration, sessionId]);
+
+    var generateCommitMessage = useCallback(function () {
+      if (commitBusyRef.current || commitGenerateRef.current.id !== null) return;
+      requestCommitMessage().then(function (message) {
         setCommitMessage(message);
         setCommitStale(false);
       }).catch(function (error) {
-        if (generation !== targetGenerationRef.current) return;
-        if (commitGenerateRef.current.id !== requestId) return;
-        commitGenerateRef.current = { id: null, controller: null };
-        setCommitGenerating(false);
-        if (error && (error.name === 'AbortError' || error.code === 'message/aborted')) return;
+        if (!error || error.name === 'AbortError' || error.code === 'message/aborted') return;
+        if (error.code === 'message/invalid') {
+          setCommitError({ message: tRef.current('error.messageInvalid') });
+          return;
+        }
         setCommitError({ message: describeError(error, tRef.current) });
       });
-    }, [abortCommitGeneration, sessionId]);
+    }, [requestCommitMessage]);
 
     /* Closing the review window must not leave a token-burning request behind. */
     useEffect(function () {
@@ -1462,59 +1524,117 @@ __def('app', function (exports, require, React) {
       refresh({ silent: true, keepSelectionOnly: true });
     }, [commitOpen, refresh, cancelCommitGeneration]);
 
-    var submitCommit = useCallback(function () {
-      if (!canCommit || commitBusy) return;
+    /* Surface a failed commit in the drawer: with the action in the toolbar the
+     * drawer may be collapsed, and the error / stale notice lives there. */
+    var showCommitFailure = useCallback(function (error) {
+      var code = error && error.code;
+      if (code === 'commit/stale') {
+        setCommitStale(true);
+        setCommitError(null);
+        setCommitOpen(true);
+        refresh({ silent: true, keepSelectionOnly: true });
+        return;
+      }
+      if (code === 'commit/conflict-pending') {
+        setCommitError({ message: tRef.current('commit.conflictBlocked') });
+      } else if (code === 'commit/failed') {
+        /* Hook / signing output is diagnosed content the user needs; the
+         * surrounding sentence stays localized and the raw host message is not
+         * shown. */
+        var details = (error && error.details) || {};
+        var output = String(details.hookOutput || details.stderr || '').trim();
+        var failure = tRef.current('error.commitFailed');
+        setCommitError({ message: output.length > 0 ? failure + '\n\n' + output : failure });
+      } else {
+        setCommitError({ message: describeError(error, tRef.current) });
+      }
+      setCommitOpen(true);
+      refresh({ silent: true, keepSelectionOnly: true });
+    }, [refresh]);
+
+    /* One action shared by the drawer's commit split and the toolbar's
+     * AI·commit+push button. Drawer modes: 'commit' commits the checked
+     * snapshot; 'commitPush' also pushes to the current branch's upstream
+     * without opening the push dialog. 'aiCommitPush' (toolbar only) drafts the
+     * message with AI first, then commits and pushes. Every write still goes
+     * through the host write chain with the same stale fingerprint guard. */
+    var runCommit = useCallback(function (modeOverride) {
+      var mode = modeOverride === 'aiCommitPush' ? 'aiCommitPush' : commitMode;
+      var ready = mode === 'aiCommitPush' ? canAiCommitPush : canCommit;
+      if (!ready || commitBusyRef.current || commitGenerateRef.current.id !== null) return;
       var rpc = state.runtime.rpc;
       if (!rpc) return;
-      var current = snapshotRef.current;
-      var expected = commitExpectation(current);
+      var expected = commitExpectation(snapshotRef.current);
       if (!expected) {
         setCommitError({ message: tRef.current('state.repoMissing') });
+        setCommitOpen(true);
         return;
       }
       var generation = targetGenerationRef.current;
       setCommitBusy(true);
       setCommitError(null);
-      var message = commitMessage;
-      var params = { message: message, expected: expected };
-      if (sessionId) params.sessionId = sessionId;
-      rpc.call('commit', params).then(function (result) {
-        if (generation !== targetGenerationRef.current) return;
-        refreshSeqRef.current += 1;
-        setCommitMessage('');
-        setCommitStale(false);
-        setCommitOpen(false);
-        if (result && result.status) applyStatus(result.status);
-        setNotice({ tone: 'success', text: t('commit.success', { sha: result.shortSha, summary: result.summary }) });
-        setDiffNonce(function (value) { return value + 1; });
+      setOperationError(null);
+      var messagePromise = mode === 'aiCommitPush' ? requestCommitMessage() : Promise.resolve(commitMessage);
+      messagePromise.then(function (message) {
+        if (generation !== targetGenerationRef.current) return null;
+        if (mode === 'aiCommitPush') setCommitMessage(message);
+        var params = { message: message, expected: expected };
+        if (sessionId) params.sessionId = sessionId;
+        return rpc.call('commit', params).then(function (result) {
+          if (generation !== targetGenerationRef.current) return null;
+          refreshSeqRef.current += 1;
+          setCommitMessage('');
+          setCommitStale(false);
+          setCommitOpen(false);
+          if (result && result.status) applyStatus(result.status);
+          setDiffNonce(function (value) { return value + 1; });
+          if (mode === 'commit') {
+            setNotice({
+              tone: 'success',
+              text: tRef.current('commit.success', { sha: result.shortSha, summary: result.summary }),
+            });
+            return null;
+          }
+          /* One-click push: no dialog. The host resolves the current branch and
+           * its upstream (the default remote and the same branch name on a first
+           * push); setUpstream keeps the branch tracking the ref it pushed to. */
+          var pushParams = { setUpstream: true };
+          if (sessionId) pushParams.sessionId = sessionId;
+          return rpc.call('push', pushParams).then(function (pushed) {
+            if (generation !== targetGenerationRef.current) return null;
+            if (pushed && pushed.status) applyStatus(pushed.status);
+            setNotice({
+              tone: 'success',
+              text: tRef.current('commit.pushSuccess', {
+                sha: result.shortSha,
+                remote: String((pushed && pushed.remote) || ''),
+                branch: String((pushed && (pushed.targetBranch || pushed.branch)) || ''),
+              }),
+            });
+            return null;
+          }).catch(function (error) {
+            if (generation !== targetGenerationRef.current) return null;
+            refreshSeqRef.current += 1;
+            setOperationError({
+              code: error && error.code,
+              message: tRef.current('commit.pushAfterCommitFailed', {
+                reason: describeError(error, tRef.current),
+              }),
+            });
+            refresh({ silent: true, keepSelectionOnly: true });
+            return null;
+          });
+        });
       }).catch(function (error) {
-        if (generation !== targetGenerationRef.current) return;
+        if (generation !== targetGenerationRef.current) return null;
+        if (!error || error.name === 'AbortError' || error.code === 'message/aborted') return null;
         refreshSeqRef.current += 1;
-        var code = error && error.code;
-        if (code === 'commit/stale') {
-          setCommitStale(true);
-          setCommitError(null);
-          refresh({ silent: true, keepSelectionOnly: true });
-          return;
-        }
-        if (code === 'commit/conflict-pending') {
-          setCommitError({ message: t('commit.conflictBlocked') });
-        } else if (code === 'commit/failed') {
-          /* Hook / signing output is diagnosed content the user needs; the
-           * surrounding sentence stays localized and the raw host message is
-           * not shown. */
-          var details = (error && error.details) || {};
-          var output = String(details.hookOutput || details.stderr || '').trim();
-          var failure = t('error.commitFailed');
-          setCommitError({ message: output.length > 0 ? failure + '\n\n' + output : failure });
-        } else {
-          setCommitError({ message: describeError(error, t) });
-        }
-        refresh({ silent: true, keepSelectionOnly: true });
+        showCommitFailure(error);
+        return null;
       }).then(function () {
         if (generation === targetGenerationRef.current) setCommitBusy(false);
       });
-    }, [canCommit, commitBusy, commitMessage, sessionId, applyStatus, refresh, t]);
+    }, [canAiCommitPush, canCommit, commitMessage, commitMode, sessionId, requestCommitMessage, applyStatus, refresh, showCommitFailure]);
 
     /* Push preview: the host compares against the remote-tracking ref of the
      * selected remote/target and returns the read-only local source branch, the
@@ -1928,11 +2048,6 @@ __def('app', function (exports, require, React) {
       ? t('reason.truncated')
       : (busy ? t('reason.busy') : '');
 
-    var pushDisabledReason = '';
-    if (!snapshot || !snapshot.repo) pushDisabledReason = t('reason.noRepo');
-    else if (!snapshot.repo.remotes || snapshot.repo.remotes.length === 0) pushDisabledReason = t('reason.noRemote');
-    else if (snapshot.repo.detached) pushDisabledReason = t('reason.detached');
-
     // ---- keyboard -----------------------------------------------------------
     /* The listener is attached to this window's DOM node, not to the document:
      * shortcuts must never leak into the DSH composer behind the window, and a
@@ -2181,6 +2296,10 @@ __def('app', function (exports, require, React) {
       onRefresh: function () { refresh({}); },
       onOpenPush: openPush,
       pushDisabledReason: pushDisabledReason,
+      aiCommitBusy: aiCommitBusy,
+      aiCommitCanRun: canAiCommitPush,
+      aiCommitDisabledReason: aiCommitDisabledReason,
+      onAiCommitPush: function () { runCommit('aiCommitPush'); },
       aiMode: aiEnabled,
       aiGrouping: aiGrouping,
       aiBusy: aiState.loading,
@@ -2334,20 +2453,32 @@ __def('app', function (exports, require, React) {
           if (commitError) setCommitError(null);
         },
         count: stagedEntries.length,
-        busy: commitBusy,
-        canCommit: canCommit,
+        busy: commitBusy || commitGenerating,
         canGenerate: canGenerate,
         generateBusy: commitGenerating,
-        reasons: commitReasons,
+        commitMode: commitMode,
+        commitBusy: commitBusy,
+        commitGenerating: commitGenerating,
+        commitCanRun: canCommit,
+        commitReasons: commitReasons,
         error: commitError,
         conflictCount: conflictCount,
-        onCommit: submitCommit,
         onGenerate: generateCommitMessage,
+        onCommit: runCommit,
+        onChangeCommitMode: function (value) {
+          saveSettings({ commitMode: value }).catch(function () {});
+        },
         staleNotice: commitStale ? t('commit.stale') : null,
       }),
       h(components.StatusBar, {
-        busy: !!busy || commitBusy,
-        operation: busy ? t('op.running') : commitBusy ? t('commit.running') : null,
+        busy: !!busy || commitBusy || commitGenerating,
+        operation: busy
+          ? t('op.running')
+          : commitGenerating
+            ? t('commit.generating')
+            : commitBusy
+              ? t('commit.running')
+              : null,
         status: snapshot,
         repo: snapshot && snapshot.repo ? snapshot.repo : null,
         error: operationError || (refreshError ? { message: describeError(refreshError, t) } : null),
@@ -2907,6 +3038,7 @@ __def('app', function (exports, require, React) {
   exports.aiEntriesSignature = aiEntriesSignature;
   exports.aiPathGroups = aiPathGroups;
   exports.groupingSettingsPatch = groupingSettingsPatch;
+  exports.commitModeOf = commitModeOf;
   exports.clampWindowSize = clampWindowSize;
   exports.clampWindowRect = clampWindowRect;
   exports.clampMinimizedWindowRect = clampMinimizedWindowRect;

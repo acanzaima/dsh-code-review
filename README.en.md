@@ -25,7 +25,7 @@
 
 - **Side-by-side review**: inspect diffs, syntax highlighting and change statistics, with quick navigation between changes.
 - **Choose what to commit**: stage and unstage files or groups, with individual hunk operations and discard for unstaged changes.
-- **Commit and push**: write commit messages or let AI draft one, preview pushes and configure remotes.
+- **Commit and push**: the split control in the commit area offers Commit / Commit and push and remembers the choice; the toolbar's **AI commit & push** performs draft → commit → push in one click without opening the commit area; use the toolbar “Push” action when you need to pick a remote or target branch, and configure remotes in the panel.
 - **Flexible windows**: review multiple workspaces or sessions independently, with movable, resizable and minimizable windows that keep the conversation accessible; supports DSH light/dark themes and Chinese/English.
 - **Optional AI grouping**: organise changes by file role or feature logic for review and staging.
 
@@ -56,7 +56,7 @@ Upgrades, disabling and uninstalling also happen on the Plugins page; to upgrade
 1. In a DSH conversation for your Git project, click the Code Review icon in the toolbar below the input field (tooltip: “Open Code Review”; see the cover above for its location).
 2. Select a file on the left to inspect its diff. Search for files or jump between changes.
 3. Check a file or group to stage it. Uncheck it to unstage while keeping the file contents. The select-all checkbox applies to the current filter results.
-4. Expand the commit area at the bottom, write a message and commit. Click “Push” when you want to sync with the remote. The sparkles icon to the left of the commit button **drafts a commit message from the staged changes**; the draft lands in the editable message field — review or edit it, then commit.
+4. Check the files to commit: write the message in the commit area at the bottom (or let the sparkles button draft one with AI) and click the split commit control's main half to run the remembered mode — **Commit** commits only; **Commit and push** pushes straight to the current branch's remote branch without a dialog. Use the chevron to switch modes; the choice is remembered across windows. For the shortcut path, skip the drawer entirely and click **AI commit & push** in the top toolbar: AI drafts the message, commits and pushes in one step. Use the toolbar “Push” action when you need to choose a remote or target branch manually.
 
 Right-click a file or a change block in the diff to stage, unstage or discard it. **Discard removes unstaged changes, requires confirmation and cannot be undone.**
 
@@ -84,15 +84,17 @@ Grouping sends project hints, metadata such as changed paths, and small excerpts
 
 ### AI commit message
 
-The sparkles icon to the left of the commit button drafts a message from the staged changes. It follows the repository's own commit style when history shows one (type / scope, language, bullet layout) and otherwise uses the conventional `type(scope): summary` form. The draft only fills the editable message field — nothing is committed automatically; when no model is available or drafting fails, the reason is shown and you can still write the message yourself.
+The sparkles button next to the commit message field drafts a message from the staged changes. It follows the repository's own commit style when history shows one (type / scope, language, bullet layout) and otherwise uses the conventional `type(scope): summary` form. The draft only fills the editable message field — nothing is committed automatically; when no model is available or drafting fails, the reason is shown and you can still write the message yourself.
 
-It only runs when clicked and sends the **staged diff** plus recent commit subjects to the model (unlike grouping, which sends metadata only); unstaged content is never sent. Decide case by case for sensitive repositories. See the [AI commit message guide](docs/ai-commit-message.md).
+The **AI commit & push** button next to the toolbar's “Push” action combines the same drafting capability with commit and push into one step: draft from the staged changes, commit, then push directly (no dialog; it uses the current branch and its remote branch). It needs neither the commit area nor a hand-written message. It is a separate button and does not change the Commit / Commit and push mode remembered by the drawer's split control.
+
+It only runs when the user triggers it, sending the **staged diff** plus recent commit subjects to the model (unlike grouping, which sends metadata only); unstaged content is never sent. Decide case by case for sensitive repositories. See the [AI commit message guide](docs/ai-commit-message.md).
 
 ## Limitations
 
 - Use other Git tools for history, branch switching, stash and rebase. Resolve conflicts externally, then refresh.
 - Binary files have no line-by-line diff. Some file types do not support hunk operations; the UI explains why.
-- Commits include only staged changes, and pushes never force-overwrite the remote. Push previews do not fetch remote updates; run `git fetch` yourself when needed.
+- Commits include only staged changes, and pushes never force-overwrite the remote. Push previews do not fetch remote updates; run `git fetch` yourself when needed. Commit-and-push (including the AI mode) also never forces or fetches; if the push fails, the commit is kept.
 - Oversized change lists are truncated, disabling select-all and commit. Reduce the change set or use the command line.
 - An AI-drafted commit message is a draft covering staged changes only; review it before committing and write it yourself for sensitive changes.
 

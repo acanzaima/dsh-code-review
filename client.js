@@ -436,13 +436,21 @@ __def('i18n', function (exports, require, React) {
       'commit.messageRequired': '请填写提交信息',
       'commit.conflictBlocked': '存在未解决冲突，解决并刷新后才能提交',
       'commit.stale': '暂存内容在检查后发生了变化，已刷新，请重新确认',
-      'commit.action': '提交',
       'commit.running': '正在提交…',
       'commit.success': '提交成功：{sha} {summary}',
       'commit.failed': '提交失败',
       'commit.onlyStaged': '只提交勾选（已暂存）的内容，不会自动暂存其他变更',
       'commit.generate': 'AI 生成提交信息',
       'commit.generating': '正在生成提交信息…',
+      'commit.mode': '提交方式',
+      'commit.modeHeader': '提交方式',
+      'commit.modeCommit': '提交',
+      'commit.modeCommitPush': '提交并推送',
+      'commit.modeAiCommitPush': 'AI·提交并推送',
+      'commit.modePushHint': '提交勾选内容后，直接推送到当前分支的远程分支（不打开推送对话框）',
+      'commit.modeAiPushHint': '先用 AI 生成提交信息，再提交勾选内容并直接推送；无需展开提交区',
+      'commit.pushSuccess': '已提交 {sha} 并推送到 {remote}/{branch}',
+      'commit.pushAfterCommitFailed': '提交成功，但推送失败：{reason}',
       'remote.title': '设置远程仓库',
       'remote.subtitle': '为当前仓库配置远程地址；只写入本地 Git 配置，不检查网络连通性。',
       'remote.name': '名称',
@@ -831,13 +839,21 @@ __def('i18n', function (exports, require, React) {
       'commit.messageRequired': 'A commit message is required',
       'commit.conflictBlocked': 'Resolve the conflicts and refresh before committing',
       'commit.stale': 'Staged content changed after the check; refreshed — please confirm again',
-      'commit.action': 'Commit',
       'commit.running': 'Committing…',
       'commit.success': 'Committed {sha} {summary}',
       'commit.failed': 'Commit failed',
       'commit.onlyStaged': 'Only checked (staged) content is committed; nothing else is staged automatically',
       'commit.generate': 'Generate commit message with AI',
       'commit.generating': 'Generating commit message…',
+      'commit.mode': 'Commit mode',
+      'commit.modeHeader': 'Commit mode',
+      'commit.modeCommit': 'Commit',
+      'commit.modeCommitPush': 'Commit and push',
+      'commit.modeAiCommitPush': 'AI commit & push',
+      'commit.modePushHint': 'Commit the checked changes, then push to the current branch’s remote branch without opening the push dialog',
+      'commit.modeAiPushHint': 'Draft the message with AI, commit the checked changes and push directly; no need to open the commit area',
+      'commit.pushSuccess': 'Committed {sha} and pushed to {remote}/{branch}',
+      'commit.pushAfterCommitFailed': 'Committed, but the push failed: {reason}',
       'remote.title': 'Remote repository',
       'remote.subtitle': 'Configure a remote URL for this repository. Only local Git config is written; network reachability is not checked.',
       'remote.name': 'Name',
@@ -1392,7 +1408,7 @@ __def('state', function (exports, require, React) {
     loaded: false,
     saving: false,
     error: null,
-    value: { aiClassify: false, aiGrouping: 'role', maxCandidates: 50, reasoningEffort: null },
+    value: { aiClassify: false, aiGrouping: 'role', commitMode: 'commit', maxCandidates: 50, reasoningEffort: null },
     locale: null,
     model: null,
   });
@@ -4594,6 +4610,10 @@ __def('styles', function (exports) {
 .gr-topbar .gr-topbar-grouping .gr-combo-value { flex: 0 1 auto; }
 .gr-topbar .gr-topbar-grouping .gr-combo-chevron .gr-ico { width: 12px; height: 12px; }
 .gr-topbar-push { min-width: 64px; }
+/* One-click AI·commit+push sits next to (not inside) the push-dialog button. On
+ * narrow toolbars the label is hidden and the spark icon + tooltip carry it. */
+.gr-topbar-ai-commit { flex: 0 0 auto; }
+.gr-topbar-ai-commit .gr-ai-commit-label { white-space: nowrap; }
 /* AI grouping state rides after the change summary inside the shrinkable
  * toolbar middle. It is part of the summary row, so it never claims a row of
  * its own; long notices truncate and stay available in full through the title
@@ -4625,6 +4645,8 @@ __def('styles', function (exports) {
   .gr-topbar-actions { gap: 2px; }
   .gr-topbar-actions .gr-topbar-sep { margin: 0 1px; }
   .gr-topbar-push { min-width: 0; padding: 0 8px; }
+  .gr-topbar-ai-commit { padding: 0 8px; }
+  .gr-topbar-ai-commit .gr-ai-commit-label { display: none; }
   .gr-topbar .gr-topbar-grouping .gr-combo-trigger { padding: 0 7px; }
 }
 
@@ -4767,6 +4789,7 @@ __def('styles', function (exports) {
 .gr-menu-item:hover:not([aria-disabled="true"]), .gr-menu-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-4, var(--dsw-alias-bg-layer-2))); outline: none; }
 .gr-menu-item[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .gr-menu-item-danger { color: var(--dsw-alias-state-error-primary); }
+.gr-menu-check { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; padding-left: 8px; color: var(--dsw-alias-brand-primary); }
 .gr-menu-sep { height: .5px; margin: 3px 8px; background: var(--dsw-alias-border-l2); }
 
 /* ---------- commit drawer ---------- */
@@ -4784,6 +4807,19 @@ __def('styles', function (exports) {
 .gr-commit .gr-textarea { min-height: 84px; }
 .gr-commit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .gr-commit-actions .gr-iconbtn { width: 32px; height: 32px; }
+/* Split commit action inside the drawer: the primary half runs the remembered
+ * commit mode, the chevron half opens the mode menu. The menu is a fixed layer
+ * rendered by the component (it opens upward, away from the drawer's bottom edge). */
+.gr-commit-target { display: inline-flex; align-items: stretch; height: 28px; flex: 0 0 auto; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); overflow: hidden; }
+.gr-commit-main { display: inline-flex; align-items: center; gap: 6px; max-width: 210px; padding: 0 10px; border: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; line-height: 1; cursor: pointer; }
+.gr-commit-mode-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-commit-mode-chevron { display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border: 0; border-left: .5px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.gr-commit-mode-chevron .gr-ico { width: 11px; height: 11px; }
+.gr-commit-main:hover:not(:disabled), .gr-commit-mode-chevron:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.gr-commit-main:disabled, .gr-commit-mode-chevron:disabled { opacity: .5; cursor: default; }
+/* The split control clips its children to the shared border radius, so the focus
+ * ring is painted inside the button box (a host-consistent ring must stay visible). */
+.gr-commit-main:focus-visible, .gr-commit-mode-chevron:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 .gr-commit .gr-warn-box, .gr-commit .gr-error-box { margin: 0; }
 .gr-textarea { width: 100%; min-height: 92px; resize: vertical; padding: 8px 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 1.6; transition: border-color var(--ds-transition-duration-fast, 100ms) var(--ds-ease-in-out, ease); }
 .gr-textarea:hover:not(:disabled):not(:focus):not(:focus-visible) { border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
@@ -4817,11 +4853,22 @@ __def('styles', function (exports) {
 /* Preview failed: an explicit error state (message + retry), never a spinner. */
 .gr-push-failed { align-items: stretch; justify-content: flex-start; padding: 20px 0; }
 .gr-push-error { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }
-.gr-push-flow { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
-.gr-push-arrow { display: inline-flex; align-items: center; color: var(--dsw-alias-label-secondary); padding-bottom: 4px; }
+/* Branch flow: three fields with one shared 34px control height, so the labels
+ * sit on a single baseline and the arrow / slash separate the values rather than
+ * the labels. The remote Select is re-skinned to the same surface as the branch
+ * input; the read-only local branch gets a muted value box of the same size. */
+.gr-push-flow { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 4px 10px; }
+.gr-push-field-local { flex: 0 1 auto; min-width: 92px; max-width: 150px; }
+.gr-push-field-remote { flex: 1 1 130px; max-width: 200px; }
+.gr-push-field-target { flex: 1.4 1 170px; }
+.gr-push-arrow { display: inline-flex; align-items: center; justify-content: center; align-self: flex-end; height: 34px; min-width: 12px; color: var(--dsw-alias-label-secondary); }
 .gr-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gr-field-label { color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); font-size: 12px; font-weight: 500; line-height: 18px; }
 .gr-field-value { font-size: 13px; line-height: 20px; padding-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-push-flow .gr-field-value { display: block; height: 34px; line-height: 32px; padding: 0 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-label-primary) 2%, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); }
+.gr-push-flow .gr-input { height: 34px; }
+.gr-push-flow .gr-combo-trigger { height: 34px; padding: 0 12px; gap: 8px; border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); font-size: 13px; line-height: 20px; }
+.gr-push-flow .gr-combo-trigger:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
 .gr-input, .gr-select { height: 34px; min-width: 120px; padding: 0 12px; border-radius: var(--dsw-radius-md, 8px); border: .5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l2)); background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-base)); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; transition: border-color var(--ds-transition-duration-fast, 100ms) var(--ds-ease-in-out, ease); }
 .gr-input:hover:not(:disabled):not(:focus):not(:focus-visible), .gr-select:hover:not(:disabled):not(:focus):not(:focus-visible) { border-color: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
 .gr-input:focus, .gr-input:focus-visible, .gr-select:focus, .gr-select:focus-visible { outline: none; border-color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); }
@@ -5954,7 +6001,7 @@ __def('components', function (exports, require, React) {
    *   FileNav          — grouped, filterable changed-file list with commit checkboxes.
    *   ContextMenu      — fixed-position keyboard-navigable menu.
    *   ConfirmDialog    — small confirmation dialog built on Modal.
-   *   CommitPanel      — collapsible commit message drawer (header + message box + AI draft action).
+   *   CommitPanel      — collapsible commit drawer (header + message box + AI draft + split commit action).
    *   PushDialog       — self-contained push dialog (own backdrop layer).
    *   PanelSettings    — in-panel settings page (AI grouping + interface).
    *   EmptyState       — centred empty/warn/error state.
@@ -6420,7 +6467,8 @@ __def('components', function (exports, require, React) {
    * panels instead of claiming a row of its own.
    *
    * Contract props: status, repo, busy, operation, onRefresh, onOpenPush,
-   * pushDisabledReason, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
+   * pushDisabledReason, aiCommitBusy, aiCommitCanRun, aiCommitDisabledReason,
+   * onAiCommitPush, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
    * onChangeGrouping(value), onReclassify, onCopy(value), onSetRemote, t.
    * Bulk staging (stage-all / unstage-all) lives in the FileNav header as the
    * tri-state select-all, where it shares the row/group checkbox model.
@@ -6564,6 +6612,28 @@ __def('components', function (exports, require, React) {
     var pushReason = props.pushDisabledReason || (busy ? t('reason.busy') : null);
     var pushTitle = pushDisabled ? disabledTitle(t, pushReason) : t('actions.push');
 
+    /* One-click AI·commit+push: reachable without expanding the commit drawer,
+     * so it lives next to (but separate from) the push-dialog button. The two
+     * actions are deliberately not merged: one opens the remote/target dialog,
+     * the other commits and pushes immediately, and hiding either behind a
+     * secondary menu would defeat its purpose. */
+    var aiCommitBusy = !!props.aiCommitBusy;
+    var aiCommitDisabled = aiCommitBusy || busy || props.aiCommitCanRun === false;
+    var aiCommitReason = busy ? t('reason.busy') : (props.aiCommitDisabledReason || null);
+    var aiCommitTitle = aiCommitDisabled ? disabledTitle(t, aiCommitReason) : t('commit.modeAiPushHint');
+    var aiCommitButton = h(Button, {
+      variant: 'default',
+      size: 'sm',
+      className: 'gr-topbar-ai-commit',
+      title: aiCommitTitle,
+      ariaLabel: t('commit.modeAiCommitPush'),
+      onClick: props.onAiCommitPush,
+      disabled: aiCommitDisabled,
+      busy: aiCommitBusy,
+      leading: h(IconSpark, { size: ICON_SIZE.md }),
+      t: t,
+    }, h('span', { className: 'gr-ai-commit-label' }, t('commit.modeAiCommitPush')));
+
     var canSelectGrouping = typeof props.onChangeGrouping === 'function';
     /* Three-way grouping selector (Git status / AI role / AI logic) built on the
      * shared Select so it looks like a DSH menu: a compact trigger with the
@@ -6646,6 +6716,7 @@ __def('components', function (exports, require, React) {
             t: t,
           }, h(IconRefresh, { size: ICON_SIZE.md })),
           h('span', { key: 'sep-push', className: 'gr-topbar-sep', 'aria-hidden': 'true' }),
+          aiCommitButton,
           h(Button, {
             variant: 'default',
             size: 'sm',
@@ -7096,11 +7167,48 @@ __def('components', function (exports, require, React) {
   /* ------------------------------------------------------------------ */
 
   /**
+   * Viewport-clamped top-left position for a menu anchored to its trigger.
+   * `anchor` / `menu` are DOMRect-like ({ left, right, top, bottom, width,
+   * height }); options are { placement: 'above'|'below', align:
+   * 'start'|'end', gap, viewport: { width, height } }. The preferred side wins
+   * when it fits; otherwise the menu flips before being clamped to the viewport.
+   * Keeping the menu flush with the anchor (4px gap by default) is what makes
+   * popovers read like DSH's own menu buttons instead of floating panels.
+   */
+  function anchorMenuPosition(anchor, menu, options) {
+    var opts = options || {};
+    var viewport = opts.viewport || { width: 1024, height: 768 };
+    var menuWidth = Math.max(0, Number(menu && menu.width) || 0);
+    var menuHeight = Math.max(0, Number(menu && menu.height) || 0);
+    var gap = Number.isFinite(opts.gap) ? Number(opts.gap) : 4;
+    var anchorTop = Number(anchor && anchor.top) || 0;
+    var anchorBottom = Number(anchor && anchor.bottom) || 0;
+    var anchorLeft = Number(anchor && anchor.left) || 0;
+    var anchorRight = Number(anchor && anchor.right) || 0;
+    var above = opts.placement !== 'below';
+    var x = opts.align === 'start' ? anchorLeft : anchorRight - menuWidth;
+    var y = above ? anchorTop - gap - menuHeight : anchorBottom + gap;
+    if (above && y < 4 && anchorBottom + gap + menuHeight <= viewport.height - 4) {
+      y = anchorBottom + gap;
+    } else if (!above && y + menuHeight > viewport.height - 4 && anchorTop - gap - menuHeight >= 4) {
+      y = anchorTop - gap - menuHeight;
+    }
+    return {
+      x: Math.round(clamp(x, 4, Math.max(4, viewport.width - menuWidth - 4))),
+      y: Math.round(clamp(y, 4, Math.max(4, viewport.height - menuHeight - 4))),
+    };
+  }
+
+  /**
    * Contract props: open, x, y, header, items [{id,label,disabled,title,
-   * danger,separator}], onSelect(id), onClose, t.
+   * danger,separator,checked}], onSelect(id), onClose, t.
    * Extra: `ignoreRef` — an element ref whose clicks must not count as
    * "outside"; used by toggle triggers so clicking them closes instead of
-   * close-then-reopen.
+   * close-then-reopen. `checked` renders a check mark and marks the row as a
+   * menu radio item (the commit-mode selector uses it for the remembered mode).
+   * `anchorRef` + `placement` ('above'|'below') + `align` ('start'|'end') anchor
+   * the menu to a trigger element instead of using the x/y pair; the commit
+   * drawer's mode menu uses this so it sits flush above the split control.
    */
   function ContextMenu(props) {
     var t = makeT(props.t);
@@ -7127,13 +7235,25 @@ __def('components', function (exports, require, React) {
       var rect = node.getBoundingClientRect();
       var width = typeof window !== 'undefined' ? window.innerWidth : rect.right;
       var height = typeof window !== 'undefined' ? window.innerHeight : rect.bottom;
-      var nextX = clamp(Number(props.x) || 0, 4, Math.max(4, width - rect.width - 4));
-      var nextY = clamp(Number(props.y) || 0, 4, Math.max(4, height - rect.height - 4));
+      var anchorNode = props.anchorRef && props.anchorRef.current;
+      var next;
+      if (anchorNode && typeof anchorNode.getBoundingClientRect === 'function') {
+        next = anchorMenuPosition(anchorNode.getBoundingClientRect(), rect, {
+          placement: props.placement === 'below' ? 'below' : 'above',
+          align: props.align === 'start' ? 'start' : 'end',
+          viewport: { width: width, height: height },
+        });
+      } else {
+        next = {
+          x: clamp(Number(props.x) || 0, 4, Math.max(4, width - rect.width - 4)),
+          y: clamp(Number(props.y) || 0, 4, Math.max(4, height - rect.height - 4)),
+        };
+      }
       setPosition(function (current) {
-        if (current.x === nextX && current.y === nextY) return current;
-        return { x: nextX, y: nextY };
+        if (current.x === next.x && current.y === next.y) return current;
+        return next;
       });
-    }, [open, props.x, props.y]);
+    }, [open, props.x, props.y, props.anchorRef, props.placement, props.align]);
 
     React.useEffect(function () {
       if (!open) return undefined;
@@ -7141,7 +7261,7 @@ __def('components', function (exports, require, React) {
       if (!doc) return undefined;
       var node = menuRef.current;
       if (node) {
-        var first = node.querySelector('[role="menuitem"]:not([aria-disabled="true"])');
+        var first = node.querySelector('[role^="menuitem"]:not([aria-disabled="true"])');
         focusNode(first);
       }
       function onOutside(event) {
@@ -7170,7 +7290,7 @@ __def('components', function (exports, require, React) {
       var node = menuRef.current;
       if (!node) return;
       event.preventDefault();
-      var items = Array.prototype.slice.call(node.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"])'));
+      var items = Array.prototype.slice.call(node.querySelectorAll('[role^="menuitem"]:not([aria-disabled="true"])'));
       if (items.length === 0) return;
       var active = typeof document !== 'undefined' ? document.activeElement : null;
       var index = items.indexOf(active);
@@ -7196,22 +7316,24 @@ __def('components', function (exports, require, React) {
         if (!item || typeof item !== 'object') return null;
         if (item.separator) return h('div', { key: 'sep-' + index, className: 'gr-menu-sep', role: 'separator' });
         var disabled = !!item.disabled;
+        var checked = item.checked === true;
         var icon = item.icon
           ? h('span', { className: 'gr-menu-icon', 'aria-hidden': 'true' }, item.icon)
           : null;
         return h('button', {
           key: item.id === undefined ? 'item-' + index : String(item.id),
           type: 'button',
-          role: 'menuitem',
+          role: item.checked === undefined ? 'menuitem' : 'menuitemradio',
           className: cx('gr-menu-item', item.danger && 'gr-menu-item-danger'),
           'aria-disabled': disabled ? 'true' : undefined,
+          'aria-checked': item.checked === undefined ? undefined : (checked ? 'true' : 'false'),
           title: item.title ? String(item.title) : undefined,
           onClick: function () {
             if (disabled) return;
             if (typeof props.onSelect === 'function') props.onSelect(item.id);
             if (typeof props.onClose === 'function') props.onClose();
           },
-        }, icon, item.label);
+        }, icon, item.label, checked ? h('span', { className: 'gr-menu-check', 'aria-hidden': 'true' }, h(IconCheck, { size: ICON_SIZE.md })) : null);
       })
     );
   }
@@ -7367,6 +7489,103 @@ __def('components', function (exports, require, React) {
   }
 
   /* ------------------------------------------------------------------ */
+  /* CommitAction                                                        */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Split commit action inside the commit drawer: the primary half runs the
+   * remembered commit mode, the chevron lists the two drawer modes (the
+   * selection is a persisted plugin setting, like the toolbar grouping
+   * selector). The one-click AI·commit+push action is a separate toolbar button,
+   * not a drawer mode. The menu opens upward because the drawer sits at the
+   * bottom of the review window.
+   *
+   * Contract props: t, mode ('commit'|'commitPush'), busy, generating, canRun,
+   * reasons [string], onCommit, onChangeMode.
+   */
+  function CommitAction(props) {
+    var t = makeT(props.t);
+    var mode = props.mode === 'commitPush' ? props.mode : 'commit';
+    var busy = !!props.busy;
+    var generating = !!props.generating;
+    var reasons = Array.isArray(props.reasons) ? props.reasons : [];
+    var running = busy || generating;
+    var menuState = React.useState(false);
+    var menuOpen = menuState[0];
+    var setMenuOpen = menuState[1];
+    var triggerRef = React.useRef(null);
+    var modes = [
+      { id: 'commit', label: t('commit.modeCommit'), hint: t('commit.onlyStaged'), icon: h(IconCommit, { size: ICON_SIZE.md }) },
+      { id: 'commitPush', label: t('commit.modeCommitPush'), hint: t('commit.modePushHint'), icon: h(IconPush, { size: ICON_SIZE.md }) },
+    ];
+    var active = modes[0];
+    for (var index = 0; index < modes.length; index += 1) {
+      if (modes[index].id === mode) active = modes[index];
+    }
+    var disabled = running || props.canRun === false;
+    var disabledReason = busy
+      ? t('commit.running')
+      : (generating ? t('commit.generating') : (reasons[0] || null));
+    var title = disabled ? disabledTitle(t, disabledReason) : active.hint;
+
+    function toggleMenu() {
+      setMenuOpen(function (value) { return !value; });
+    }
+
+    function choose(id) {
+      setMenuOpen(false);
+      if (id !== mode && typeof props.onChangeMode === 'function') props.onChangeMode(String(id));
+    }
+
+    return h(React.Fragment, null,
+      h('span', { className: 'gr-commit-target', ref: triggerRef },
+        h('button', {
+          type: 'button',
+          className: 'gr-commit-main',
+          title: title,
+          'aria-label': active.label,
+          'aria-busy': running ? 'true' : undefined,
+          disabled: disabled ? true : undefined,
+          onClick: function () {
+            if (disabled) return;
+            setMenuOpen(false);
+            if (typeof props.onCommit === 'function') props.onCommit();
+          },
+        },
+          running ? h(Spinner, { size: 11 }) : active.icon,
+          h('span', { className: 'gr-commit-mode-label' }, active.label)),
+        h('button', {
+          type: 'button',
+          className: 'gr-commit-mode-chevron',
+          title: t('commit.mode'),
+          'aria-label': t('commit.mode'),
+          'aria-haspopup': 'menu',
+          'aria-expanded': menuOpen ? 'true' : 'false',
+          disabled: running ? true : undefined,
+          onClick: toggleMenu,
+        }, h(IconChevronDown, { size: ICON_SIZE.md }))),
+      menuOpen
+        ? h(ContextMenu, {
+          open: true,
+          /* Anchored like DSH's file-explorer menu: flush above the split control
+           * (4px gap) and right-aligned to it, so it does not float away from the
+           * trigger; the helper flips/clamps only when the viewport is too tight. */
+          anchorRef: triggerRef,
+          placement: 'above',
+          align: 'end',
+          header: t('commit.modeHeader'),
+          items: modes.map(function (item) {
+            return { id: item.id, label: item.label, title: item.hint, checked: item.id === mode };
+          }),
+          onSelect: choose,
+          onClose: function () { setMenuOpen(false); },
+          ignoreRef: triggerRef,
+          t: t,
+        })
+        : null);
+  }
+
+  /* ------------------------------------------------------------------ */
   /* CommitPanel                                                         */
   /* ------------------------------------------------------------------ */
 
@@ -7376,19 +7595,19 @@ __def('components', function (exports, require, React) {
    * the commit message and the actions. The header row (title + checked-file
    * count + expand toggle) is always visible; the body opens on demand and
    * holds a multi-line message field, warnings, the AI draft action and the
-   * commit action. There is deliberately no keyboard shortcut: the message is
-   * committed with the button only.
+   * split commit action (its mode is persisted). There is deliberately no
+   * keyboard shortcut: the message is committed from the split action only.
    *
    * Contract props: open, onToggle, message, onMessageChange, count, busy,
-   * canCommit, canGenerate, generateBusy, reasons [string], error,
-   * conflictCount, staleNotice, onCommit, onGenerate, t.
+   * canGenerate, generateBusy, commitMode, commitBusy, commitGenerating,
+   * commitCanRun, commitReasons [string], error, conflictCount, staleNotice,
+   * onGenerate, onCommit, onChangeCommitMode, t.
    */
   function CommitPanel(props) {
     var t = makeT(props.t);
     var open = !!props.open;
     var message = props.message === undefined || props.message === null ? '' : String(props.message);
     var count = Number(props.count) || 0;
-    var reasons = Array.isArray(props.reasons) ? props.reasons : [];
     var textareaRef = React.useRef(null);
     var previousOpen = React.useRef(false);
 
@@ -7398,11 +7617,6 @@ __def('components', function (exports, require, React) {
     }, [open]);
 
     var generateBusy = !!props.generateBusy;
-    var commitTitle = !props.canCommit
-      ? disabledTitle(t, reasons[0] || t('reason.nothingToCommit'))
-      : generateBusy
-        ? t('commit.generating')
-        : t('commit.onlyStaged');
     var conflictBlocked = Number(props.conflictCount) > 0;
 
     return h('div', { className: cx('gr-commit', open && 'gr-commit-open') },
@@ -7449,15 +7663,16 @@ __def('components', function (exports, require, React) {
             onClick: props.onGenerate,
             t: t,
           }, h(IconSpark, { size: ICON_SIZE.md })),
-          h(Button, {
-            variant: 'primary',
-            onClick: props.onCommit,
-            busy: !!props.busy,
-            disabled: !props.canCommit || generateBusy,
-            title: commitTitle,
-            busyLabel: t('commit.running'),
+          h(CommitAction, {
             t: t,
-          }, t('commit.action'))
+            mode: props.commitMode,
+            busy: !!props.commitBusy,
+            generating: !!props.commitGenerating,
+            canRun: props.commitCanRun,
+            reasons: props.commitReasons,
+            onCommit: props.onCommit,
+            onChangeMode: props.onChangeCommitMode,
+          })
         )
       )
     );
@@ -7599,12 +7814,12 @@ __def('components', function (exports, require, React) {
             ? h('div', { className: 'gr-push-loading gr-push-failed' }, errorBox)
             : h('div', { className: 'gr-push-body' },
               h('div', { className: 'gr-push-flow' },
-                h('div', { className: 'gr-field' },
+                h('div', { className: 'gr-field gr-push-field-local' },
                   h('span', { className: 'gr-field-label' }, t('push.localBranch')),
                   h('span', { className: 'gr-field-value gr-mono', title: sourceBranch }, sourceBranch || t('common.unknown'))
                 ),
                 h('span', { className: 'gr-push-arrow', 'aria-hidden': 'true' }, h(IconArrowRight, { size: ICON_SIZE.md })),
-                h('div', { className: 'gr-field' },
+                h('div', { className: 'gr-field gr-push-field-remote' },
                   h('span', { className: 'gr-field-label' }, t('push.remote')),
                   remotes.length === 0
                     ? h('span', { className: 'gr-field-value gr-dim' }, t('common.none'))
@@ -7620,7 +7835,7 @@ __def('components', function (exports, require, React) {
                     })
                 ),
                 h('span', { className: 'gr-push-arrow', 'aria-hidden': 'true' }, '/'),
-                h('div', { className: 'gr-field' },
+                h('div', { className: 'gr-field gr-push-field-target' },
                   h('span', { className: 'gr-field-label' }, t('push.targetBranch')),
                   h(TextField, {
                     type: 'text',
@@ -8557,9 +8772,11 @@ __def('components', function (exports, require, React) {
   exports.ReviewTitle = ReviewTitle;
   exports.FileNav = FileNav;
   exports.ContextMenu = ContextMenu;
+  exports.anchorMenuPosition = anchorMenuPosition;
   exports.OpenTargetButton = OpenTargetButton;
   exports.ConfirmDialog = ConfirmDialog;
   exports.CommitPanel = CommitPanel;
+  exports.CommitAction = CommitAction;
   exports.PushDialog = PushDialog;
   exports.RemoteDialog = RemoteDialog;
   exports.PanelSettings = PanelSettings;
@@ -8988,11 +9205,21 @@ __def('app', function (exports, require, React) {
   // ---------------------------------------------------------------------------
   // Plugin settings bootstrap (git groups vs AI groups, locale, limits)
   // ---------------------------------------------------------------------------
+  /**
+   * Persisted commit mode of the drawer's split commit control. Unknown values
+   * (an older settings file, the retired 'aiCommitPush' mode) fall back to the
+   * plain commit.
+   */
+  function commitModeOf(value) {
+    return value === 'commitPush' ? 'commitPush' : 'commit';
+  }
+
   /** Normalise the settings value carried in the client store. */
   function pickSettingsValue(value) {
     var result = {
       aiClassify: value && value.aiClassify === true,
       aiGrouping: value && value.aiGrouping === 'logic' ? 'logic' : 'role',
+      commitMode: commitModeOf(value && value.commitMode),
       preclassify: value && value.preclassify === true,
       maxCandidates: value && Number.isFinite(value.maxCandidates) ? value.maxCandidates : 50,
     };
@@ -9070,13 +9297,14 @@ __def('app', function (exports, require, React) {
     if (!rpc) return Promise.resolve();
     state.settingsStore.set(function (current) {
       var nextValue = {};
-      var keys = ['aiClassify', 'aiGrouping', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
+      var keys = ['aiClassify', 'aiGrouping', 'commitMode', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
       for (var index = 0; index < keys.length; index += 1) {
         if (current.value && current.value[keys[index]] !== undefined) nextValue[keys[index]] = current.value[keys[index]];
       }
       if (patch) {
         if ('aiClassify' in patch) nextValue.aiClassify = patch.aiClassify === true;
         if ('aiGrouping' in patch) nextValue.aiGrouping = patch.aiGrouping === 'logic' ? 'logic' : 'role';
+        if ('commitMode' in patch) nextValue.commitMode = commitModeOf(patch.commitMode);
         if ('preclassify' in patch) nextValue.preclassify = patch.preclassify === true;
         if ('maxCandidates' in patch) nextValue.maxCandidates = patch.maxCandidates;
         if ('provider' in patch) {
@@ -9939,23 +10167,53 @@ __def('app', function (exports, require, React) {
     }, [cancelAiRequest]);
 
     // ---- commit / push ------------------------------------------------------
+    /* The commit mode chosen in the drawer's split control is persisted next to
+     * the other plugin settings; the main half of the control runs it. The
+     * one-click AI·commit+push action lives in the top toolbar instead: it must
+     * be reachable without expanding the drawer and is not a persisted mode. */
+    var commitMode = commitModeOf(settingsSnapshot.value.commitMode);
+
+    var pushDisabledReason = '';
+    if (!snapshot || !snapshot.repo) pushDisabledReason = t('reason.noRepo');
+    else if (!snapshot.repo.remotes || snapshot.repo.remotes.length === 0) pushDisabledReason = t('reason.noRemote');
+    else if (snapshot.repo.detached) pushDisabledReason = t('reason.detached');
+
     var stagedEntries = useMemo(function () {
       return entries.filter(function (entry) { return entry.status === 'staged'; });
     }, [entries]);
 
-    var commitReasons = useMemo(function () {
-      var reasons = [];
-      if (truncated) reasons.push(t('reason.truncated'));
-      if (conflictCount > 0) reasons.push(t('commit.conflictBlocked'));
-      if (stagedEntries.length === 0) reasons.push(t('commit.nothingChecked'));
-      if (commitMessage.trim().length === 0) reasons.push(t('commit.messageRequired'));
-      return reasons;
-    }, [truncated, conflictCount, stagedEntries.length, commitMessage, t]);
+    /* Guards shared by the drawer commit split and the toolbar AI action: the
+     * commit set must be previewable and the index must hold something. */
+    var commitBaseReasons = [];
+    if (truncated) commitBaseReasons.push(t('reason.truncated'));
+    if (conflictCount > 0) commitBaseReasons.push(t('commit.conflictBlocked'));
+    if (stagedEntries.length === 0) commitBaseReasons.push(t('commit.nothingChecked'));
 
-    var canCommit = !truncated && conflictCount === 0 && stagedEntries.length > 0 && commitMessage.trim().length > 0;
-    /* The AI draft action only needs staged content: the message field may be
-     * empty (that is the point) and the user can still edit the draft. Its
-     * tooltip is the action name only — no reason breakdown. */
+    /* Drawer modes commit the editable message; '提交并推送' also pushes without
+     * opening the push dialog, so a missing remote / detached HEAD must block it
+     * up front instead of failing after the commit. */
+    var commitReasons = commitBaseReasons.slice();
+    if (commitMessage.trim().length === 0) commitReasons.push(t('commit.messageRequired'));
+    if (commitMode === 'commitPush' && pushDisabledReason) commitReasons.push(pushDisabledReason);
+
+    var canCommit = commitBaseReasons.length === 0
+      && commitMessage.trim().length > 0
+      && (commitMode === 'commit' || !pushDisabledReason);
+
+    /* The toolbar AI action drafts its own message, so it needs neither the
+     * drawer nor a typed message; it does need a usable push target. */
+    var aiCommitReasons = commitBaseReasons.slice();
+    if (pushDisabledReason) aiCommitReasons.push(pushDisabledReason);
+    var canAiCommitPush = aiCommitReasons.length === 0;
+    var aiCommitBusy = commitBusy || commitGenerating;
+    var aiCommitDisabledReason = commitBusy
+      ? t('commit.running')
+      : commitGenerating
+        ? t('commit.generating')
+        : (aiCommitReasons[0] || null);
+    /* The AI draft action in the drawer only needs staged content: the message
+     * field may be empty (that is the point) and the user can still edit the
+     * draft. Its tooltip is the action name only — no reason breakdown. */
     var canGenerate = !truncated && conflictCount === 0 && stagedEntries.length > 0;
 
     /* AI commit-message draft: an explicit, read-only action. Aborting the
@@ -9980,20 +10238,26 @@ __def('app', function (exports, require, React) {
       setCommitGenerating(false);
     }, [abortCommitGeneration]);
 
-    var generateCommitMessage = useCallback(function () {
+    /* Shared AI draft request used by the drawer's draft button and by the
+     * AI·commit+push toolbar action. One in-flight request at a time; resolves
+     * with the plain-text message or rejects with the host error (an aborted or
+     * superseded request rejects with an AbortError). */
+    var requestCommitMessage = useCallback(function () {
       var rpc = state.runtime.rpc;
-      if (!rpc || commitBusyRef.current) return;
+      if (!rpc) return Promise.reject(new Error('rpc unavailable'));
       var current = snapshotRef.current;
-      if (!current || !current.repo) return;
+      if (!current || !current.repo) return Promise.reject(new Error('repository missing'));
       var summary = current.summary || {};
       var list = Array.isArray(current.entries) ? current.entries : [];
       var stagedCount = 0;
       for (var index = 0; index < list.length; index += 1) {
         if (list[index] && list[index].status === 'staged') stagedCount += 1;
       }
-      /* Re-check the same guards the button uses against the live snapshot:
-       * a reply for a change set the user already refreshed away is useless. */
-      if (summary.truncated || (summary.conflicts || 0) > 0 || stagedCount === 0) return;
+      /* Re-check the same guards the action uses against the live snapshot: a
+       * reply for a change set the user already refreshed away is useless. */
+      if (summary.truncated || (summary.conflicts || 0) > 0 || stagedCount === 0) {
+        return Promise.reject({ code: 'message/no-staged' });
+      }
       abortCommitGeneration();
       var generation = targetGenerationRef.current;
       var requestId = util.uid('message');
@@ -10003,27 +10267,42 @@ __def('app', function (exports, require, React) {
       setCommitError(null);
       var params = { requestId: requestId };
       if (sessionId) params.sessionId = sessionId;
-      rpc.call('commitMessage', params, { signal: controller.signal }).then(function (value) {
-        if (generation !== targetGenerationRef.current) return;
-        if (commitGenerateRef.current.id !== requestId || controller.signal.aborted) return;
+      return rpc.call('commitMessage', params, { signal: controller.signal }).then(function (value) {
+        if (generation !== targetGenerationRef.current
+          || commitGenerateRef.current.id !== requestId
+          || controller.signal.aborted) {
+          var superseded = new Error('commit message request superseded');
+          superseded.name = 'AbortError';
+          throw superseded;
+        }
         commitGenerateRef.current = { id: null, controller: null };
         setCommitGenerating(false);
         var message = value && typeof value.message === 'string' ? value.message : '';
-        if (message.trim().length === 0) {
-          setCommitError({ message: tRef.current('error.messageInvalid') });
-          return;
+        if (message.trim().length === 0) throw { code: 'message/invalid' };
+        return message;
+      }).catch(function (error) {
+        if (commitGenerateRef.current.id === requestId) {
+          commitGenerateRef.current = { id: null, controller: null };
+          setCommitGenerating(false);
         }
+        throw error;
+      });
+    }, [abortCommitGeneration, sessionId]);
+
+    var generateCommitMessage = useCallback(function () {
+      if (commitBusyRef.current || commitGenerateRef.current.id !== null) return;
+      requestCommitMessage().then(function (message) {
         setCommitMessage(message);
         setCommitStale(false);
       }).catch(function (error) {
-        if (generation !== targetGenerationRef.current) return;
-        if (commitGenerateRef.current.id !== requestId) return;
-        commitGenerateRef.current = { id: null, controller: null };
-        setCommitGenerating(false);
-        if (error && (error.name === 'AbortError' || error.code === 'message/aborted')) return;
+        if (!error || error.name === 'AbortError' || error.code === 'message/aborted') return;
+        if (error.code === 'message/invalid') {
+          setCommitError({ message: tRef.current('error.messageInvalid') });
+          return;
+        }
         setCommitError({ message: describeError(error, tRef.current) });
       });
-    }, [abortCommitGeneration, sessionId]);
+    }, [requestCommitMessage]);
 
     /* Closing the review window must not leave a token-burning request behind. */
     useEffect(function () {
@@ -10046,59 +10325,117 @@ __def('app', function (exports, require, React) {
       refresh({ silent: true, keepSelectionOnly: true });
     }, [commitOpen, refresh, cancelCommitGeneration]);
 
-    var submitCommit = useCallback(function () {
-      if (!canCommit || commitBusy) return;
+    /* Surface a failed commit in the drawer: with the action in the toolbar the
+     * drawer may be collapsed, and the error / stale notice lives there. */
+    var showCommitFailure = useCallback(function (error) {
+      var code = error && error.code;
+      if (code === 'commit/stale') {
+        setCommitStale(true);
+        setCommitError(null);
+        setCommitOpen(true);
+        refresh({ silent: true, keepSelectionOnly: true });
+        return;
+      }
+      if (code === 'commit/conflict-pending') {
+        setCommitError({ message: tRef.current('commit.conflictBlocked') });
+      } else if (code === 'commit/failed') {
+        /* Hook / signing output is diagnosed content the user needs; the
+         * surrounding sentence stays localized and the raw host message is not
+         * shown. */
+        var details = (error && error.details) || {};
+        var output = String(details.hookOutput || details.stderr || '').trim();
+        var failure = tRef.current('error.commitFailed');
+        setCommitError({ message: output.length > 0 ? failure + '\n\n' + output : failure });
+      } else {
+        setCommitError({ message: describeError(error, tRef.current) });
+      }
+      setCommitOpen(true);
+      refresh({ silent: true, keepSelectionOnly: true });
+    }, [refresh]);
+
+    /* One action shared by the drawer's commit split and the toolbar's
+     * AI·commit+push button. Drawer modes: 'commit' commits the checked
+     * snapshot; 'commitPush' also pushes to the current branch's upstream
+     * without opening the push dialog. 'aiCommitPush' (toolbar only) drafts the
+     * message with AI first, then commits and pushes. Every write still goes
+     * through the host write chain with the same stale fingerprint guard. */
+    var runCommit = useCallback(function (modeOverride) {
+      var mode = modeOverride === 'aiCommitPush' ? 'aiCommitPush' : commitMode;
+      var ready = mode === 'aiCommitPush' ? canAiCommitPush : canCommit;
+      if (!ready || commitBusyRef.current || commitGenerateRef.current.id !== null) return;
       var rpc = state.runtime.rpc;
       if (!rpc) return;
-      var current = snapshotRef.current;
-      var expected = commitExpectation(current);
+      var expected = commitExpectation(snapshotRef.current);
       if (!expected) {
         setCommitError({ message: tRef.current('state.repoMissing') });
+        setCommitOpen(true);
         return;
       }
       var generation = targetGenerationRef.current;
       setCommitBusy(true);
       setCommitError(null);
-      var message = commitMessage;
-      var params = { message: message, expected: expected };
-      if (sessionId) params.sessionId = sessionId;
-      rpc.call('commit', params).then(function (result) {
-        if (generation !== targetGenerationRef.current) return;
-        refreshSeqRef.current += 1;
-        setCommitMessage('');
-        setCommitStale(false);
-        setCommitOpen(false);
-        if (result && result.status) applyStatus(result.status);
-        setNotice({ tone: 'success', text: t('commit.success', { sha: result.shortSha, summary: result.summary }) });
-        setDiffNonce(function (value) { return value + 1; });
+      setOperationError(null);
+      var messagePromise = mode === 'aiCommitPush' ? requestCommitMessage() : Promise.resolve(commitMessage);
+      messagePromise.then(function (message) {
+        if (generation !== targetGenerationRef.current) return null;
+        if (mode === 'aiCommitPush') setCommitMessage(message);
+        var params = { message: message, expected: expected };
+        if (sessionId) params.sessionId = sessionId;
+        return rpc.call('commit', params).then(function (result) {
+          if (generation !== targetGenerationRef.current) return null;
+          refreshSeqRef.current += 1;
+          setCommitMessage('');
+          setCommitStale(false);
+          setCommitOpen(false);
+          if (result && result.status) applyStatus(result.status);
+          setDiffNonce(function (value) { return value + 1; });
+          if (mode === 'commit') {
+            setNotice({
+              tone: 'success',
+              text: tRef.current('commit.success', { sha: result.shortSha, summary: result.summary }),
+            });
+            return null;
+          }
+          /* One-click push: no dialog. The host resolves the current branch and
+           * its upstream (the default remote and the same branch name on a first
+           * push); setUpstream keeps the branch tracking the ref it pushed to. */
+          var pushParams = { setUpstream: true };
+          if (sessionId) pushParams.sessionId = sessionId;
+          return rpc.call('push', pushParams).then(function (pushed) {
+            if (generation !== targetGenerationRef.current) return null;
+            if (pushed && pushed.status) applyStatus(pushed.status);
+            setNotice({
+              tone: 'success',
+              text: tRef.current('commit.pushSuccess', {
+                sha: result.shortSha,
+                remote: String((pushed && pushed.remote) || ''),
+                branch: String((pushed && (pushed.targetBranch || pushed.branch)) || ''),
+              }),
+            });
+            return null;
+          }).catch(function (error) {
+            if (generation !== targetGenerationRef.current) return null;
+            refreshSeqRef.current += 1;
+            setOperationError({
+              code: error && error.code,
+              message: tRef.current('commit.pushAfterCommitFailed', {
+                reason: describeError(error, tRef.current),
+              }),
+            });
+            refresh({ silent: true, keepSelectionOnly: true });
+            return null;
+          });
+        });
       }).catch(function (error) {
-        if (generation !== targetGenerationRef.current) return;
+        if (generation !== targetGenerationRef.current) return null;
+        if (!error || error.name === 'AbortError' || error.code === 'message/aborted') return null;
         refreshSeqRef.current += 1;
-        var code = error && error.code;
-        if (code === 'commit/stale') {
-          setCommitStale(true);
-          setCommitError(null);
-          refresh({ silent: true, keepSelectionOnly: true });
-          return;
-        }
-        if (code === 'commit/conflict-pending') {
-          setCommitError({ message: t('commit.conflictBlocked') });
-        } else if (code === 'commit/failed') {
-          /* Hook / signing output is diagnosed content the user needs; the
-           * surrounding sentence stays localized and the raw host message is
-           * not shown. */
-          var details = (error && error.details) || {};
-          var output = String(details.hookOutput || details.stderr || '').trim();
-          var failure = t('error.commitFailed');
-          setCommitError({ message: output.length > 0 ? failure + '\n\n' + output : failure });
-        } else {
-          setCommitError({ message: describeError(error, t) });
-        }
-        refresh({ silent: true, keepSelectionOnly: true });
+        showCommitFailure(error);
+        return null;
       }).then(function () {
         if (generation === targetGenerationRef.current) setCommitBusy(false);
       });
-    }, [canCommit, commitBusy, commitMessage, sessionId, applyStatus, refresh, t]);
+    }, [canAiCommitPush, canCommit, commitMessage, commitMode, sessionId, requestCommitMessage, applyStatus, refresh, showCommitFailure]);
 
     /* Push preview: the host compares against the remote-tracking ref of the
      * selected remote/target and returns the read-only local source branch, the
@@ -10512,11 +10849,6 @@ __def('app', function (exports, require, React) {
       ? t('reason.truncated')
       : (busy ? t('reason.busy') : '');
 
-    var pushDisabledReason = '';
-    if (!snapshot || !snapshot.repo) pushDisabledReason = t('reason.noRepo');
-    else if (!snapshot.repo.remotes || snapshot.repo.remotes.length === 0) pushDisabledReason = t('reason.noRemote');
-    else if (snapshot.repo.detached) pushDisabledReason = t('reason.detached');
-
     // ---- keyboard -----------------------------------------------------------
     /* The listener is attached to this window's DOM node, not to the document:
      * shortcuts must never leak into the DSH composer behind the window, and a
@@ -10765,6 +11097,10 @@ __def('app', function (exports, require, React) {
       onRefresh: function () { refresh({}); },
       onOpenPush: openPush,
       pushDisabledReason: pushDisabledReason,
+      aiCommitBusy: aiCommitBusy,
+      aiCommitCanRun: canAiCommitPush,
+      aiCommitDisabledReason: aiCommitDisabledReason,
+      onAiCommitPush: function () { runCommit('aiCommitPush'); },
       aiMode: aiEnabled,
       aiGrouping: aiGrouping,
       aiBusy: aiState.loading,
@@ -10918,20 +11254,32 @@ __def('app', function (exports, require, React) {
           if (commitError) setCommitError(null);
         },
         count: stagedEntries.length,
-        busy: commitBusy,
-        canCommit: canCommit,
+        busy: commitBusy || commitGenerating,
         canGenerate: canGenerate,
         generateBusy: commitGenerating,
-        reasons: commitReasons,
+        commitMode: commitMode,
+        commitBusy: commitBusy,
+        commitGenerating: commitGenerating,
+        commitCanRun: canCommit,
+        commitReasons: commitReasons,
         error: commitError,
         conflictCount: conflictCount,
-        onCommit: submitCommit,
         onGenerate: generateCommitMessage,
+        onCommit: runCommit,
+        onChangeCommitMode: function (value) {
+          saveSettings({ commitMode: value }).catch(function () {});
+        },
         staleNotice: commitStale ? t('commit.stale') : null,
       }),
       h(components.StatusBar, {
-        busy: !!busy || commitBusy,
-        operation: busy ? t('op.running') : commitBusy ? t('commit.running') : null,
+        busy: !!busy || commitBusy || commitGenerating,
+        operation: busy
+          ? t('op.running')
+          : commitGenerating
+            ? t('commit.generating')
+            : commitBusy
+              ? t('commit.running')
+              : null,
         status: snapshot,
         repo: snapshot && snapshot.repo ? snapshot.repo : null,
         error: operationError || (refreshError ? { message: describeError(refreshError, t) } : null),
@@ -11491,6 +11839,7 @@ __def('app', function (exports, require, React) {
   exports.aiEntriesSignature = aiEntriesSignature;
   exports.aiPathGroups = aiPathGroups;
   exports.groupingSettingsPatch = groupingSettingsPatch;
+  exports.commitModeOf = commitModeOf;
   exports.clampWindowSize = clampWindowSize;
   exports.clampWindowRect = clampWindowRect;
   exports.clampMinimizedWindowRect = clampMinimizedWindowRect;

@@ -223,14 +223,14 @@ HTTP 状态约定：
 - `stage` 的数组形式会把冲突条目显式暂存（标记为已解决）；`stage "all"` 不会自动处理冲突条目。
 - `hunkIndex` 必须是非负整数，且指向该文件当前 diff 中的 hunk；hunk 写操作的 `expected` 来自**当前展示的 diff** 的 `entry.fingerprint`。
 - `commit` 的 `expected` 为 `{ headSha, stagedFingerprint }`；`stagedFingerprint` 来自最近一次 `status`，覆盖完整暂存区。
-- `pushPreview` 与 `push` 的 `remote` / `targetBranch` 是可选的；`push` 的源分支永远取 Host 当前本地分支，客户端不能指定。`push` 未设置上游且未指定 `setUpstream: true` 时返回 `push/upstream-missing`。
+- `pushPreview` 与 `push` 的 `remote` / `targetBranch` 是可选的；`push` 的源分支永远取 Host 当前本地分支，客户端不能指定。`push` 未设置上游且未指定 `setUpstream: true` 时返回 `push/upstream-missing`。工具栏的「AI·提交并推送」与提交抽屉的「提交并推送」都不经过 `pushPreview`、也不打开推送对话框：提交成功后直接调用 `push`（`{ sessionId? }`，固定 `setUpstream: true`），目标由 Host 按本行规则解析为当前分支的上游（没有上游时默认远程 + 同名分支）。AI 动作只是把 `commitMessage` 的结果直接交给 `commit`，协议本身没有新增方法。
 - `remoteSet` 的 `name` 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$` 且不超过 200 字符；`url` 会先 `trim`，必须非空、不超过 2048 字符、不含控制字符且不以 `-` 开头（避免被当作 git 选项）。URL **只做语法校验**：Host 只写本地 Git 配置（同名远程用 `git remote set-url` 更新地址，不存在则 `git remote add`），不检查地址可达性、不发起网络请求，错误的地址或凭据由后续 push / fetch 的 Git 报错暴露。
 - `classify` 的 `entries` 只信任 `key`：Host 重新读取状态并用真实条目构造分类输入；提供的 key 不在当前状态中返回 `entry/not-found`，省略 `entries` 时归类当前状态的全部条目。
 - `classify` 的 `requestId` 用于取消和标识结果；同一 `requestId` 的新请求会中止旧请求，`classifyCancel` 可按 id 取消。
 - `classify` 的 `grouping` 可选，取 `"role"`（按文件职能，默认）或 `"logic"`（按功能逻辑）；显式值优先于持久化设置 `aiGrouping`，只影响本次请求的提示词与分类语义，不改变设置。非法值返回 `ai/invalid` 且 `details.reason = "invalid-grouping"`，不会调用模型。结果里的 `grouping` 回报本次实际使用的模式，客户端据此丢弃切换模式后迟到的旧回复。
 - `commitMessage` 是只读的 AI 草拟动作：客户端**只发送目标参数与可选 `requestId`**，不提供条目、路径或 patch；Host 从新的 `status` 读取暂存条目，自己执行 `git diff --cached` 与 `git log` 构造模型输入。没有已暂存条目时返回 `message/no-staged`，不会调用模型。`requestId` 用于标识结果与取消：同一 id 的新请求会中止旧请求，`commitMessageCancel` 可按 id 取消；结果里的 `requestId` 原样回显。它不改变任何 Git 状态，也不需要打开 AI 归类。
 - `commitMessage` 与 `classify` 使用同一条有效模型路由（插件显式设置 → 请求会话模型 → DSH 默认模型）和同一个推理档位设置；两个能力互不依赖。
-- `settingsSet` 的 `patch` 支持 `aiClassify`（boolean）、`aiGrouping`（`"role"` / `"logic"`）、`preclassify`（boolean，会话空闲时预归类）、`maxCandidates`（number）、`locale`（`"zh"` / `"en"` / `null`）、`customInstructions`（≤ 4000 字符的字符串 / `null`）、`provider` / `model`（字符串 / `null`，必须成对设置或清除）、`reasoningEffort`（≤ 64 字符的字符串 / `null`，属于当前模型的推理档位）。`null` 表示清除该字段（`aiGrouping` 不接受 `null`，恢复默认值请显式发送 `"role"`）。修改 `provider` / `model` 且未携带新的 `reasoningEffort` 时，Host 会清除旧档位，避免把 A 模型的档位应用到 B 模型；修改 `aiGrouping` 会清空分类缓存。
+- `settingsSet` 的 `patch` 支持 `aiClassify`（boolean）、`aiGrouping`（`"role"` / `"logic"`）、`preclassify`（boolean，会话空闲时预归类）、`maxCandidates`（number）、`commitMode`（`"commit"` / `"commitPush"`，提交抽屉 split 控件的行为模式，默认 `"commit"`；早期版本曾持久化 `"aiCommitPush"`，现在按未知值回退到 `"commit"`）、`locale`（`"zh"` / `"en"` / `null`）、`customInstructions`（≤ 4000 字符的字符串 / `null`）、`provider` / `model`（字符串 / `null`，必须成对设置或清除）、`reasoningEffort`（≤ 64 字符的字符串 / `null`，属于当前模型的推理档位）。`null` 表示清除该字段（`aiGrouping` / `commitMode` 不接受 `null`，恢复默认值请显式发送 `"role"` / `"commit"`）。修改 `provider` / `model` 且未携带新的 `reasoningEffort` 时，Host 会清除旧档位，避免把 A 模型的档位应用到 B 模型；修改 `aiGrouping` 会清空分类缓存。
 
 ## 5. 数据形状
 
@@ -441,6 +441,7 @@ type SettingsValue = {
   aiGrouping: 'role' | 'logic'; // AI 归类模式（默认 'role'）：按职能 / 按功能逻辑
   maxCandidates: number;
   preclassify: boolean;        // 会话空闲时预归类（默认 false；会静默消耗模型 token）
+  commitMode: 'commit' | 'commitPush'; // 提交抽屉 split 控件的行为模式（默认 'commit'）
   locale?: 'zh' | 'en';
   provider?: string;           // 显式归类模型路由；两者都缺省时跟随会话模型
   model?: string;
@@ -466,7 +467,7 @@ type ModelCatalog = {
 };
 ```
 
-设置默认值：`{ aiClassify: false, aiGrouping: 'role', maxCandidates: 50, preclassify: false }`。
+设置默认值：`{ aiClassify: false, aiGrouping: 'role', maxCandidates: 50, preclassify: false, commitMode: 'commit' }`。
 
 ### 5.1 协议上限
 

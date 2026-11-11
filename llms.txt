@@ -2,9 +2,11 @@
 
 > Review, stage and commit the uncommitted Git changes of the repository that
 > belongs to the current DSH conversation — with non-modal floating review
-> windows, side-by-side diffs, file and hunk operations, commit/push (including
-> in-panel remote setup), optional AI-assisted grouping, and an explicit
-> AI commit-message draft that reuses the repository's own commit style.
+> windows, side-by-side diffs, file and hunk operations, a persistent
+> commit / commit-and-push split control in the commit drawer plus a one-click
+> AI commit-and-push toolbar action, push with in-panel remote setup, optional
+> AI-assisted grouping, and an explicit AI commit-message draft that reuses the
+> repository's own commit style.
 
 A plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 (DSH) Web UI. It opens a non-modal floating review window per conversation, not a

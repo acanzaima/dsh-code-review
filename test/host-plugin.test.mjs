@@ -675,6 +675,7 @@ describe('settings and AI grouping', () => {
     assert.equal(initial.ok, true);
     assert.equal(initial.value.aiClassify, false);
     assert.equal(initial.value.aiGrouping, 'role', 'grouping defaults to the role mode');
+    assert.equal(initial.value.commitMode, 'commit', 'commit mode defaults to commit');
     const updated = await plugin.dispatch('settingsSet', { patch: { aiClassify: true, maxCandidates: 50 } });
     assert.equal(updated.ok, true);
     assert.equal(updated.value.aiClassify, true);
@@ -683,6 +684,7 @@ describe('settings and AI grouping', () => {
     assert.equal(stored.aiClassify, true);
     assert.equal(stored.maxCandidates, 50);
     assert.equal(stored.aiGrouping, 'role');
+    assert.equal(stored.commitMode, 'commit');
   });
 
   test('aiGrouping persists, is validated and falls back to role', async () => {
@@ -703,6 +705,68 @@ describe('settings and AI grouping', () => {
       assert.equal((await plugin.dispatch('settingsGet', {})).value.aiGrouping, 'logic');
     } finally {
       await plugin.dispatch('settingsSet', { patch: { aiGrouping: 'role' } });
+    }
+  });
+
+  test('commitMode persists, rejects the retired AI mode and unrelated saves keep it', async () => {
+    const settingsFile = join(home, 'code-review', 'settings.json');
+    try {
+      const updated = await plugin.dispatch('settingsSet', { patch: { commitMode: 'commitPush' } });
+      assert.equal(updated.ok, true);
+      assert.equal(updated.value.commitMode, 'commitPush');
+      assert.equal((await plugin.dispatch('settingsGet', {})).value.commitMode, 'commitPush');
+      assert.equal(JSON.parse(await readFile(settingsFile, 'utf8')).commitMode, 'commitPush');
+
+      // The first iteration exposed 'aiCommitPush' as a drawer mode; it is now a
+      // toolbar action and must no longer be accepted as a persisted mode.
+      const retired = await plugin.dispatch('settingsSet', { patch: { commitMode: 'aiCommitPush' } });
+      assert.equal(retired.ok, false);
+      assert.equal(retired.error.code, 'settings/invalid');
+
+      // A patch that does not mention the field must not reset it.
+      const unrelated = await plugin.dispatch('settingsSet', { patch: { maxCandidates: 60 } });
+      assert.equal(unrelated.ok, true);
+      assert.equal(unrelated.value.commitMode, 'commitPush');
+      assert.equal((await plugin.dispatch('settingsGet', {})).value.commitMode, 'commitPush');
+      assert.equal(JSON.parse(await readFile(settingsFile, 'utf8')).commitMode, 'commitPush');
+
+      for (const value of ['aiCommitPush', 'push', 'commit-push', '', 1, null, true]) {
+        const rejected = await plugin.dispatch('settingsSet', { patch: { commitMode: value } });
+        assert.equal(rejected.ok, false, `accepted ${JSON.stringify(value)}`);
+        assert.equal(rejected.error.code, 'settings/invalid');
+      }
+      // Rejected writes persist nothing; the previous mode and saved file stay intact.
+      assert.equal((await plugin.dispatch('settingsGet', {})).value.commitMode, 'commitPush');
+      assert.equal(JSON.parse(await readFile(settingsFile, 'utf8')).commitMode, 'commitPush');
+    } finally {
+      await plugin.dispatch('settingsSet', { patch: { commitMode: 'commit' } });
+    }
+  });
+
+  test('a retired or unknown persisted commitMode degrades to commit', async () => {
+    // A hand-edited / older settings file must not break the drawer: the retired
+    // 'aiCommitPush' mode and any unknown value fall back to the documented
+    // default on load.
+    const fallbackHome = join(workspace, 'fallback-home');
+    await mkdir(join(fallbackHome, 'code-review'), { recursive: true });
+    const previousHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = fallbackHome;
+    try {
+      for (const persistedMode of ['aiCommitPush', 'obsolete-mode']) {
+        await writeFile(
+          join(fallbackHome, 'code-review', 'settings.json'),
+          `${JSON.stringify({ aiClassify: true, commitMode: persistedMode }, null, 2)}\n`,
+          'utf8',
+        );
+        const { createHostPlugin } = await import('../src/host/index.js');
+        const fallbackPlugin = createHostPlugin(fakeCtx(repoDir));
+        const read = await fallbackPlugin.dispatch('settingsGet', {});
+        assert.equal(read.ok, true);
+        assert.equal(read.value.commitMode, 'commit', `persisted ${persistedMode}`);
+        assert.equal(read.value.aiClassify, true, 'the rest of the persisted settings still load');
+      }
+    } finally {
+      process.env.DSH_HOME = previousHome;
     }
   });
 

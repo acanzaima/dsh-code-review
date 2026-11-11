@@ -11,7 +11,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const DEFAULTS = Object.freeze({ aiClassify: false, aiGrouping: 'role', maxCandidates: 50, preclassify: false });
+const DEFAULTS = Object.freeze({ aiClassify: false, aiGrouping: 'role', maxCandidates: 50, preclassify: false, commitMode: 'commit' });
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME;
@@ -33,6 +33,10 @@ function normalize(raw) {
     aiGrouping: source.aiGrouping === 'logic' ? 'logic' : 'role',
     maxCandidates: clampInteger(source.maxCandidates, 1, 1000, DEFAULTS.maxCandidates),
     preclassify: source.preclassify === true,
+    // 'commit' (default) / 'commitPush' select what the commit drawer's split
+    // control does. Unknown persisted values (including the older
+    // 'aiCommitPush' mode, now a toolbar action) degrade to the default.
+    commitMode: source.commitMode === 'commitPush' ? 'commitPush' : 'commit',
   };
   if (typeof source.provider === 'string' && source.provider.length > 0) next.provider = source.provider;
   if (typeof source.model === 'string' && source.model.length > 0) next.model = source.model;
