@@ -3,6 +3,12 @@
 本项目的所有重要变更都记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+
+- 压缩中英文 README 封面（`assets/cover.en.png` / `assets/cover.zh.png`）：按 sharp 默认的调色板量化（quality 75）重新编码，单张从约 1.66 MiB 降到约 0.38–0.40 MiB（约 -77%），像素尺寸不变，100% 缩放下未见可见差异。
+
 ## [0.2.3] - 2026-11-11
 
 ### Added
