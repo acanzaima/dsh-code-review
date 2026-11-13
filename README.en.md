@@ -25,6 +25,7 @@
 
 - **Side-by-side review**: inspect diffs, syntax highlighting and change statistics, with quick navigation between changes.
 - **Choose what to commit**: stage and unstage files or groups, with individual hunk operations and discard for unstaged changes.
+- **Workspaces without Git**: when the workspace is not a Git repository yet, the empty state offers **Initialise and refresh**; it creates only `.git/` and never generates or modifies project files.
 - **Commit and push**: the split control in the commit area offers Commit / Commit and push and remembers the choice; the toolbar's **AI commit & push** performs draft → commit → push in one click without opening the commit area; use the toolbar “Push” action when you need to pick a remote or target branch, and configure remotes in the panel.
 - **Flexible windows**: review multiple workspaces or sessions independently, with movable, resizable and minimizable windows that keep the conversation accessible; supports DSH light/dark themes and Chinese/English.
 - **Optional AI grouping**: organise changes by file role or feature logic for review and staging.
@@ -53,10 +54,14 @@ Upgrades, disabling and uninstalling also happen on the Plugins page; to upgrade
 
 ## Usage
 
-1. In a DSH conversation for your Git project, click the Code Review icon in the toolbar below the input field (tooltip: “Open Code Review”; see the cover above for its location).
+1. In a DSH conversation for your project, click the Code Review icon in the toolbar below the input field (tooltip: “Open Code Review”; see the cover above for its location).
 2. Select a file on the left to inspect its diff. Search for files or jump between changes.
 3. Check a file or group to stage it. Uncheck it to unstage while keeping the file contents. The select-all checkbox applies to the current filter results.
 4. Check the files to commit: write the message in the commit area at the bottom (or let the sparkles button draft one with AI) and click the split commit control's main half to run the remembered mode — **Commit** commits only; **Commit and push** pushes straight to the current branch's remote branch without a dialog. Use the chevron to switch modes; the choice is remembered across windows. For the shortcut path, skip the drawer entirely and click **AI commit & push** in the top toolbar: AI drafts the message, commits and pushes in one step. Use the toolbar “Push” action when you need to choose a remote or target branch manually.
+
+The file navigation groups by whether a path already exists in the repository (tracked / new / conflicts); staging or unstaging changes the commit state but never moves a file between groups.
+
+If the workspace is not a Git repository yet, the window offers **Initialise and refresh**; it creates only `.git/` and never generates or modifies project files.
 
 Right-click a file or a change block in the diff to stage, unstage or discard it. **Discard removes unstaged changes, requires confirmation and cannot be undone.**
 
@@ -73,12 +78,12 @@ Each window has its own review UI state; plugin settings and the Git state of th
 
 ### AI grouping
 
-Files are grouped by Git status by default. The toolbar also offers:
+By default, files are grouped by whether they already exist in the repository (tracked / new / conflicts), so staging or unstaging never re-groups the list. The toolbar also offers:
 
 - **By role**: group shared components, business features, config, tests, docs and similar roles.
 - **By feature logic**: collect changes for the same feature together, with config, build or docs-only changes under “Non-functional changes”.
 
-AI grouping is off by default and only organises the file list. It follows the current session's model unless you choose another in the window settings. If grouping fails, Git-status review remains available.
+AI grouping is off by default and only organises the file list. It follows the current session's model unless you choose another in the window settings. If grouping fails, the Git-status grouping (tracked / new / conflicts) remains available. Each AI mode has its own optional extra grouping instructions in the window settings; an entry there applies only to that mode.
 
 Grouping sends project hints, metadata such as changed paths, and small excerpts of untracked text files through DSH's model service. The plugin collects no telemetry and stores no API keys; keep AI grouping off for sensitive projects. Optional idle pre-grouping is also off by default and can consume model tokens while the window is closed. See the [AI grouping guide](docs/ai-grouping.md) for data scope and settings.
 

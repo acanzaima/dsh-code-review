@@ -302,8 +302,10 @@ test('resolveRepo: repo/no-git and repo/not-found', async (t) => {
 test('init creates a repository without touching working-tree files', async (t) => {
   const git = newGit();
   // Outside the plugin checkout: a directory inside it would resolve to this
-  // repository instead of being a plain directory.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-code-review-init-'));
+  // repository instead of being a plain directory. os.tmpdir() is an 8.3 short
+  // path on Windows CI (RUNNER~1) while git reports the canonical long path, so
+  // pin the canonical form before comparing roots.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-code-review-init-')));
   t.after(() => removeTree(dir));
   fs.writeFileSync(path.join(dir, 'note.txt'), 'keep me\n');
   await expectGitError(git.resolveRepo(dir), 'repo/no-git');
