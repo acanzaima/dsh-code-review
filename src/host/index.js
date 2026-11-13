@@ -289,7 +289,7 @@ export function createHostPlugin(ctx) {
   /** In-flight commit-message drafts, cancellable per request id (read-only op). */
   const messageControllers = new Map();
 
-  function classifySignature(repo, entries, model, reasoningEffort, grouping) {
+  function classifySignature(repo, entries, model, reasoningEffort, grouping, customInstructions) {
     const hash = createHash('sha256');
     hash.update(repo.root);
     hash.update('\u0000');
@@ -298,8 +298,11 @@ export function createHostPlugin(ctx) {
     hash.update(reasoningEffort ?? '');
     hash.update('\u0000');
     // The grouping mode selects a different prompt, so a warm role-mode result
-    // must never be served for a logic-mode request (and vice versa).
+    // must never be served for a logic-mode request (and vice versa); the mode's
+    // extra instructions are part of that prompt and belong in the signature too.
     hash.update(grouping ?? 'role');
+    hash.update('\u0000');
+    hash.update(customInstructions ?? '');
     hash.update('\u0000');
     for (const entry of entries) {
       const fingerprint = entry.fingerprint !== null && typeof entry.fingerprint === 'object' ? entry.fingerprint : {};
@@ -346,8 +349,9 @@ export function createHostPlugin(ctx) {
   /**
    * Run (or reuse) one classification for an already-resolved repository and
    * prepared entries. The cache is keyed by repo + effective model + grouping
-   * mode + entry fingerprints, so a warm cache returns without another model
-   * call while switching modes always gets a fresh result.
+   * mode + that mode's instructions + entry fingerprints, so a warm cache
+   * returns without another model call while switching modes or editing the
+   * instructions always gets a fresh result.
    */
   async function runClassification({ repo, entries, limitedOut, sessionId, requestId, force, grouping, current, controller }) {
     // Explicit plugin choice → the model the requesting session runs on →
@@ -363,7 +367,12 @@ export function createHostPlugin(ctx) {
       ? current.reasoningEffort
       : undefined;
     const mode = grouping === 'logic' ? 'logic' : 'role';
-    const signature = classifySignature(repo, entries, model, reasoningEffort, mode);
+    // Each mode carries its own extra instructions: the two prompts ask for
+    // different grouping principles, so a logic-specific rule must never leak
+    // into role mode (or vice versa).
+    const instructionsKey = mode === 'logic' ? 'customInstructionsLogic' : 'customInstructionsRole';
+    const instructions = typeof current[instructionsKey] === 'string' ? current[instructionsKey] : '';
+    const signature = classifySignature(repo, entries, model, reasoningEffort, mode, instructions);
     const cached = classifyCache.get(repo.root);
     if (force !== true && cached !== undefined && cached.signature === signature) {
       return { ...cached.result, cached: true };
@@ -374,7 +383,7 @@ export function createHostPlugin(ctx) {
       project: await projectHints(repo.root),
       signal: controller.signal,
       route: effectiveRoute === null ? undefined : effectiveRoute,
-      customInstructions: typeof current.customInstructions === 'string' ? current.customInstructions : '',
+      customInstructions: instructions,
       reasoningEffort,
       grouping: mode,
     });
@@ -543,6 +552,24 @@ export function createHostPlugin(ctx) {
     async status(params) {
       const context = await contextFor(params);
       return context.status;
+    },
+
+    /* Turn the session's workspace into a repository without touching its
+     * files: git init writes only `.git/`. It is a write, so it rides the
+     * shared chain, and it re-resolves first: if another window initialised the
+     * directory in the meantime, that repository is returned instead of being
+     * re-initialised. */
+    async repoInit(params) {
+      return serialise(async () => {
+        const opened = await openRepo(params);
+        if (opened.repo === null && opened.error.code !== 'repo/no-git') {
+          throw new ProtocolError(opened.error.code, opened.error.message);
+        }
+        const created = opened.repo === null;
+        const repo = created ? await git.init(opened.cwd) : opened.repo;
+        const status = await contextFor(params);
+        return { repo: status.status.repo ?? repo, created, status: status.status };
+      });
     },
 
     async diff(params) {
@@ -785,9 +812,12 @@ export function createHostPlugin(ctx) {
       if ('locale' in patch && patch.locale !== null && patch.locale !== 'zh' && patch.locale !== 'en') {
         throw new ProtocolError('settings/invalid', 'locale must be zh, en or null');
       }
-      if ('customInstructions' in patch && patch.customInstructions !== null) {
-        if (typeof patch.customInstructions !== 'string' || patch.customInstructions.length > 4000) {
-          throw new ProtocolError('settings/invalid', 'customInstructions must be a string of at most 4000 characters or null');
+      // Each mode's instructions are validated independently; the legacy shared
+      // field stays accepted so an older client bundle can still save them.
+      for (const field of ['customInstructionsRole', 'customInstructionsLogic', 'customInstructions']) {
+        if (!(field in patch) || patch[field] === null) continue;
+        if (typeof patch[field] !== 'string' || patch[field].length > 4000) {
+          throw new ProtocolError('settings/invalid', `${field} must be a string of at most 4000 characters or null`);
         }
       }
       if ('reasoningEffort' in patch && patch.reasoningEffort !== null) {
@@ -818,6 +848,13 @@ export function createHostPlugin(ctx) {
       // model without naming a new level clears it so the new model's default
       // (or the classifier's "off" fallback) applies instead of a stale id.
       const effectivePatch = { ...patch };
+      // The pre-split settings page sent one shared field; apply it to both
+      // modes (its old behaviour). Explicit per-mode values win.
+      if ('customInstructions' in patch) {
+        if (!('customInstructionsRole' in patch)) effectivePatch.customInstructionsRole = patch.customInstructions;
+        if (!('customInstructionsLogic' in patch)) effectivePatch.customInstructionsLogic = patch.customInstructions;
+        delete effectivePatch.customInstructions;
+      }
       if (('provider' in patch || 'model' in patch) && !('reasoningEffort' in patch)) {
         effectivePatch.reasoningEffort = null;
       }
@@ -828,7 +865,8 @@ export function createHostPlugin(ctx) {
       // grouping mode, invalidates cached results. Disabling AI grouping also
       // drops queued pre-classifications; disabling pre-classification only
       // drops the queue.
-      if (patch.aiClassify === false || 'provider' in patch || 'model' in patch || 'customInstructions' in patch
+      if (patch.aiClassify === false || 'provider' in patch || 'model' in patch
+        || 'customInstructions' in patch || 'customInstructionsRole' in patch || 'customInstructionsLogic' in patch
         || 'maxCandidates' in patch || 'reasoningEffort' in patch || 'aiGrouping' in patch) {
         classifyCache.clear();
       }

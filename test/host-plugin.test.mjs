@@ -5,7 +5,7 @@
  */
 import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -212,6 +212,34 @@ describe('protocol', () => {
     const result = await plugin.dispatch('status', { sessionId: 'session-1' });
     assert.equal(result.ok, true);
     assert.equal(resolve(result.value.repo.root), resolve(repoDir));
+  });
+
+  test('repoInit initialises a plain workspace without touching its files', async () => {
+    const plain = join(workspace, 'plain');
+    await mkdir(plain, { recursive: true });
+    await writeFile(join(plain, 'notes.txt'), 'keep me\n', 'utf8');
+    const before = await plugin.dispatch('status', { cwd: plain });
+    assert.equal(before.ok, true);
+    assert.equal(before.value.state, 'no-git');
+
+    const created = await plugin.dispatch('repoInit', { cwd: plain });
+    assert.equal(created.ok, true);
+    assert.equal(created.value.created, true);
+    assert.equal(created.value.status.state, 'ok');
+    assert.equal(resolve(created.value.repo.root), resolve(plain));
+    assert.ok(created.value.status.entries.some((entry) => entry.path === 'notes.txt'),
+      'the untouched file shows up as an untracked entry');
+    assert.equal(await readFile(join(plain, 'notes.txt'), 'utf8'), 'keep me\n');
+    assert.deepEqual((await readdir(plain)).sort(), ['.git', 'notes.txt'], 'only .git is created');
+
+    // Idempotent: an existing repository is returned, never re-initialised.
+    const again = await plugin.dispatch('repoInit', { cwd: plain });
+    assert.equal(again.ok, true);
+    assert.equal(again.value.created, false);
+
+    const missing = await plugin.dispatch('repoInit', { cwd: join(workspace, 'no-such-dir') });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error.code, 'repo/not-found');
   });
 
   test('diff returns both full sides and hunks', async () => {
@@ -965,20 +993,22 @@ describe('settings and AI grouping', () => {
     assert.equal(value.reasoning.defaultEffort, 'high');
   });
 
-  test('a chosen model and custom prompt instructions are persisted and used', async () => {
+  test('each grouping mode keeps and uses its own prompt instructions', async () => {
     const saved = await plugin.dispatch('settingsSet', {
       patch: {
         aiClassify: true,
         provider: 'fake',
         model: 'fake-model-pro',
-        customInstructions: '  按业务域分组  ',
+        customInstructionsRole: '  按业务域分组  ',
+        customInstructionsLogic: '  把测试与夹具放进对应功能  ',
       },
     });
     assert.equal(saved.ok, true);
     assert.equal(saved.value.selectedModel, 'fake/fake-model-pro');
     assert.equal(saved.value.effectiveModel, 'fake/fake-model-pro');
     assert.equal(saved.value.model, 'fake-model-pro');
-    assert.equal(saved.value.customInstructions, '按业务域分组');
+    assert.equal(saved.value.customInstructionsRole, '按业务域分组');
+    assert.equal(saved.value.customInstructionsLogic, '把测试与夹具放进对应功能');
 
     const status = (await plugin.dispatch('status', { cwd: repoDir })).value;
     const entries = status.entries.map((entry) => ({
@@ -993,22 +1023,43 @@ describe('settings and AI grouping', () => {
       fingerprint: entry.fingerprint,
     }));
     llmReply = JSON.stringify({ categories: [{ name: '全部', ids: entries.map((entry) => entry.key) }] });
-    const classified = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-model', entries, force: true });
-    assert.equal(classified.ok, true);
-    assert.equal(classified.value.model, 'fake/fake-model-pro');
-    assert.equal(classified.value.categories.length, 1);
 
-    // Invalid prompt types are rejected.
-    const invalid = await plugin.dispatch('settingsSet', { patch: { customInstructions: 42 } });
-    assert.equal(invalid.ok, false);
-    assert.equal(invalid.error.code, 'settings/invalid');
+    // Role mode receives only its own instructions; logic mode only its own.
+    const role = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-model-role', entries, force: true, grouping: 'role' });
+    assert.equal(role.ok, true);
+    assert.equal(role.value.model, 'fake/fake-model-pro');
+    assert.equal(role.value.categories.length, 1);
+    assert.match(llmRequest.system, /按业务域分组/);
+    assert.doesNotMatch(llmRequest.system, /把测试与夹具放进对应功能/);
+
+    const logic = await plugin.dispatch('classify', { cwd: repoDir, requestId: 'req-model-logic', entries, force: true, grouping: 'logic' });
+    assert.equal(logic.ok, true);
+    assert.match(llmRequest.system, /把测试与夹具放进对应功能/);
+    assert.doesNotMatch(llmRequest.system, /按业务域分组/);
+
+    // The pre-split shared field still maps to both modes instead of being dropped.
+    const legacy = await plugin.dispatch('settingsSet', { patch: { customInstructions: '  共享要求  ' } });
+    assert.equal(legacy.ok, true);
+    assert.equal(legacy.value.customInstructionsRole, '共享要求');
+    assert.equal(legacy.value.customInstructionsLogic, '共享要求');
+
+    // Invalid prompt types are rejected per field.
+    const invalidLegacy = await plugin.dispatch('settingsSet', { patch: { customInstructions: 42 } });
+    assert.equal(invalidLegacy.ok, false);
+    assert.equal(invalidLegacy.error.code, 'settings/invalid');
+    const invalidRole = await plugin.dispatch('settingsSet', { patch: { customInstructionsRole: 42 } });
+    assert.equal(invalidRole.ok, false);
+    assert.equal(invalidRole.error.code, 'settings/invalid');
 
     // Clearing the selection falls back to the DSH default model.
-    const cleared = await plugin.dispatch('settingsSet', { patch: { provider: null, model: null, customInstructions: null } });
+    const cleared = await plugin.dispatch('settingsSet', {
+      patch: { provider: null, model: null, customInstructionsRole: null, customInstructionsLogic: null },
+    });
     assert.equal(cleared.ok, true);
     assert.equal(cleared.value.selectedModel, null);
     assert.equal(cleared.value.effectiveModel, 'fake/fake-model');
-    assert.equal(cleared.value.customInstructions, undefined);
+    assert.equal(cleared.value.customInstructionsRole, undefined);
+    assert.equal(cleared.value.customInstructionsLogic, undefined);
   });
 
   test('turning the switch off disables classification', async () => {

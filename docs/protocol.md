@@ -182,7 +182,7 @@ HTTP 状态约定：
 - 只有传输层问题才返回非 200：非 `POST` 返回 `405`，请求体不是 JSON 返回 `400`。
 - 客户端把任何非 2xx 响应视为传输错误（`transport/http-<status>`），并区分 `transport/bad-json`（响应不是 JSON）与 `transport/bad-envelope`（响应不是对象）。
 
-**仓库解析**：需要仓库的方法按 `sessionId` → 显式 `cwd` → 插件默认 cwd（`ctx.workingDirectory.defaultDirectory`，缺失时退回进程 cwd）解析。需要仓库的方法在解析失败时抛出 `repo/no-git` 等协议错误；`status` 是例外，它返回 `state: "no-git"` / `"error"` 的空状态，便于窗口显示空态。`settingsGet` / `settingsSet` / `models` / `classifyCancel` 不解析仓库。
+**仓库解析**：需要仓库的方法按 `sessionId` → 显式 `cwd` → 插件默认 cwd（`ctx.workingDirectory.defaultDirectory`，缺失时退回进程 cwd）解析。需要仓库的方法在解析失败时抛出 `repo/no-git` 等协议错误；`status` 是例外，它返回 `state: "no-git"` / `"error"` 的空状态，便于窗口显示空态。`settingsGet` / `settingsSet` / `models` / `classifyCancel` 不解析仓库。`repoInit` 是唯一在 `repo/no-git` 目录里写仓库的方法：它只创建 `.git/`，不创建或修改任何工作区文件（不生成 README / LICENSE / .gitignore）。
 
 除 `classifyCancel` 外，所有会接触仓库的方法在回复里都带 `repo`；客户端据此判断回复是否属于当前仓库，并丢弃迟到的其它仓库响应。
 
@@ -191,6 +191,7 @@ HTTP 状态约定：
 | method | params | value |
 | --- | --- | --- |
 | `status` | `{ sessionId?: string, cwd?: string }` | `StatusPayload` |
+| `repoInit` | `{ sessionId?, cwd? }` | `RepoInitResult` |
 | `diff` | `{ sessionId?, cwd?, key: string }` | `EntryDiff` |
 | `stage` | `{ sessionId?, cwd?, keys: string[] \| "all", includeUntracked?: boolean, expected: ExpectedFingerprints }` | `OpResult` |
 | `unstage` | `{ sessionId?, cwd?, keys: string[] \| "all", expected: ExpectedFingerprints }` | `OpResult` |
@@ -210,7 +211,7 @@ HTTP 状态约定：
 | `settingsGet` | `{ sessionId? }` | `SettingsValue` |
 | `settingsSet` | `{ sessionId?, patch: object }` | `SettingsValue` |
 
-所有写方法（`stage` / `unstage` / `discard`、三个 hunk 方法、`commit`、`push`、`remoteSet`、`settingsSet`）共享插件级写链，串行执行；其中接触仓库的写方法（含 `remoteSet`）返回的 `status` 都是写后重新读取的 `StatusPayload`，`settingsSet` 返回最新的 `SettingsValue`。
+所有写方法（`stage` / `unstage` / `discard`、三个 hunk 方法、`commit`、`push`、`remoteSet`、`repoInit`、`settingsSet`）共享插件级写链，串行执行；其中接触仓库的写方法（含 `remoteSet` 与 `repoInit`）返回的 `status` 都是写后重新读取的 `StatusPayload`，`settingsSet` 返回最新的 `SettingsValue`。
 
 参数细节：
 
@@ -224,13 +225,14 @@ HTTP 状态约定：
 - `hunkIndex` 必须是非负整数，且指向该文件当前 diff 中的 hunk；hunk 写操作的 `expected` 来自**当前展示的 diff** 的 `entry.fingerprint`。
 - `commit` 的 `expected` 为 `{ headSha, stagedFingerprint }`；`stagedFingerprint` 来自最近一次 `status`，覆盖完整暂存区。
 - `pushPreview` 与 `push` 的 `remote` / `targetBranch` 是可选的；`push` 的源分支永远取 Host 当前本地分支，客户端不能指定。`push` 未设置上游且未指定 `setUpstream: true` 时返回 `push/upstream-missing`。工具栏的「AI·提交并推送」与提交抽屉的「提交并推送」都不经过 `pushPreview`、也不打开推送对话框：提交成功后直接调用 `push`（`{ sessionId? }`，固定 `setUpstream: true`），目标由 Host 按本行规则解析为当前分支的上游（没有上游时默认远程 + 同名分支）。AI 动作只是把 `commitMessage` 的结果直接交给 `commit`，协议本身没有新增方法。
+- `repoInit` 只调用 `git init`（argv 形式，`cwd` 为解析后的工作区目录），因此它是可以安全重复调用的：目录已经是仓库时直接返回现有仓库、`created: false`，不重写任何内容；目录不是仓库时创建 `.git/`（分支名遵循用户的 `init.defaultBranch` 配置）并返回最新状态。目录不存在返回 `repo/not-found`，git 不可用返回 `repo/git-unavailable`，`git init` 失败返回 `repo/init-failed`。
 - `remoteSet` 的 `name` 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$` 且不超过 200 字符；`url` 会先 `trim`，必须非空、不超过 2048 字符、不含控制字符且不以 `-` 开头（避免被当作 git 选项）。URL **只做语法校验**：Host 只写本地 Git 配置（同名远程用 `git remote set-url` 更新地址，不存在则 `git remote add`），不检查地址可达性、不发起网络请求，错误的地址或凭据由后续 push / fetch 的 Git 报错暴露。
 - `classify` 的 `entries` 只信任 `key`：Host 重新读取状态并用真实条目构造分类输入；提供的 key 不在当前状态中返回 `entry/not-found`，省略 `entries` 时归类当前状态的全部条目。
 - `classify` 的 `requestId` 用于取消和标识结果；同一 `requestId` 的新请求会中止旧请求，`classifyCancel` 可按 id 取消。
 - `classify` 的 `grouping` 可选，取 `"role"`（按文件职能，默认）或 `"logic"`（按功能逻辑）；显式值优先于持久化设置 `aiGrouping`，只影响本次请求的提示词与分类语义，不改变设置。非法值返回 `ai/invalid` 且 `details.reason = "invalid-grouping"`，不会调用模型。结果里的 `grouping` 回报本次实际使用的模式，客户端据此丢弃切换模式后迟到的旧回复。
 - `commitMessage` 是只读的 AI 草拟动作：客户端**只发送目标参数与可选 `requestId`**，不提供条目、路径或 patch；Host 从新的 `status` 读取暂存条目，自己执行 `git diff --cached` 与 `git log` 构造模型输入。没有已暂存条目时返回 `message/no-staged`，不会调用模型。`requestId` 用于标识结果与取消：同一 id 的新请求会中止旧请求，`commitMessageCancel` 可按 id 取消；结果里的 `requestId` 原样回显。它不改变任何 Git 状态，也不需要打开 AI 归类。
 - `commitMessage` 与 `classify` 使用同一条有效模型路由（插件显式设置 → 请求会话模型 → DSH 默认模型）和同一个推理档位设置；两个能力互不依赖。
-- `settingsSet` 的 `patch` 支持 `aiClassify`（boolean）、`aiGrouping`（`"role"` / `"logic"`）、`preclassify`（boolean，会话空闲时预归类）、`maxCandidates`（number）、`commitMode`（`"commit"` / `"commitPush"`，提交抽屉 split 控件的行为模式，默认 `"commit"`；早期版本曾持久化 `"aiCommitPush"`，现在按未知值回退到 `"commit"`）、`locale`（`"zh"` / `"en"` / `null`）、`customInstructions`（≤ 4000 字符的字符串 / `null`）、`provider` / `model`（字符串 / `null`，必须成对设置或清除）、`reasoningEffort`（≤ 64 字符的字符串 / `null`，属于当前模型的推理档位）。`null` 表示清除该字段（`aiGrouping` / `commitMode` 不接受 `null`，恢复默认值请显式发送 `"role"` / `"commit"`）。修改 `provider` / `model` 且未携带新的 `reasoningEffort` 时，Host 会清除旧档位，避免把 A 模型的档位应用到 B 模型；修改 `aiGrouping` 会清空分类缓存。
+- `settingsSet` 的 `patch` 支持 `aiClassify`（boolean）、`aiGrouping`（`"role"` / `"logic"`）、`preclassify`（boolean，会话空闲时预归类）、`maxCandidates`（number）、`commitMode`（`"commit"` / `"commitPush"`，提交抽屉 split 控件的行为模式，默认 `"commit"`；早期版本曾持久化 `"aiCommitPush"`，现在按未知值回退到 `"commit"`）、`locale`（`"zh"` / `"en"` / `null`）、`customInstructionsRole` / `customInstructionsLogic`（各 ≤ 4000 字符的字符串 / `null`，分别只作用于对应模式；旧的共享字段 `customInstructions` 仍被接受，读取或写入时会映射到两个模式）、`provider` / `model`（字符串 / `null`，必须成对设置或清除）、`reasoningEffort`（≤ 64 字符的字符串 / `null`，属于当前模型的推理档位）。`null` 表示清除该字段（`aiGrouping` / `commitMode` 不接受 `null`，恢复默认值请显式发送 `"role"` / `"commit"`）。修改 `provider` / `model` 且未携带新的 `reasoningEffort` 时，Host 会清除旧档位，避免把 A 模型的档位应用到 B 模型；修改 `aiGrouping` 会清空分类缓存。
 
 ## 5. 数据形状
 
@@ -305,6 +307,12 @@ type StatusPayload = {
   };
   stagedFingerprint: string;       // 完整暂存区的规范指纹，提交时回传；不受 2000 行展示上限影响
   generatedAt: number;             // 毫秒时间戳
+};
+
+type RepoInitResult = {
+  repo: RepoRef;
+  created: boolean;                // true=目录原本不是仓库，本次执行了 git init；false=已经是仓库
+  status: StatusPayload;           // 初始化后重新读取的状态
 };
 
 type DiffSide = {
@@ -446,7 +454,8 @@ type SettingsValue = {
   provider?: string;           // 显式归类模型路由；两者都缺省时跟随会话模型
   model?: string;
   reasoningEffort?: string;   // 显式推理档位；缺省时归类优先使用模型的 off 档位
-  customInstructions?: string; // 追加到内置归类提示词（≤ 4000 字符）
+  customInstructionsRole?: string;  // 仅「按职能」模式：追加到内置提示词（≤ 4000 字符）
+  customInstructionsLogic?: string; // 仅「按功能逻辑」模式：追加到内置提示词（≤ 4000 字符）
   // settingsGet / settingsSet 额外返回、但不持久化的标签字段：
   effectiveModel?: string | null; // 显式 → 会话 → DSH 默认
   defaultModel?: string | null;   // DSH 默认模型
@@ -532,6 +541,7 @@ staged:<oldPath>:<path>          # staged 的重命名 / 复制条目（path 为
 | `repo/error` | 仓库解析的其他失败（作为 `status` 空状态中的 `error` 返回） |
 | `repo/timeout` | 单次 git 调用超过 120 秒 |
 | `repo/output-too-large` | 单次 git 调用的 stdout+stderr 超过 64 MiB |
+| `repo/init-failed` | `git init` 执行失败（详见 `details.argv` / `stderr`） |
 | `entry/not-found` | 条目 key 不在当前状态中 |
 | `entry/unsupported` | 该条目类型不支持此操作（hunk 操作、discard 等） |
 | `entry/conflict` | 条目处于未解决冲突状态 |

@@ -1,6 +1,6 @@
 {
   "name": "@acanzaima/dsh-code-review",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Review, stage and commit Git changes in non-modal floating review windows inside the DSH Web UI, with an optional AI-assisted change grouping.",
   "type": "module",
   "license": "MIT",

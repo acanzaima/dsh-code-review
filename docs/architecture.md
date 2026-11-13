@@ -136,9 +136,11 @@ sequenceDiagram
     end
 ```
 
-所有写方法（stage / unstage / discard、三个 hunk 方法、commit、push、remoteSet、settingsSet）都进入同一条插件级写链，因此同一窗口（乃至不同窗口）的两个写操作不会交错。写链只约束本插件；外部工具随时可能改动仓库，所以真正的正确性来自写前的重新读取与指纹校验，而不是队列本身。
+所有写方法（stage / unstage / discard、三个 hunk 方法、commit、push、remoteSet、repoInit、settingsSet）都进入同一条插件级写链，因此同一窗口（乃至不同窗口）的两个写操作不会交错。写链只约束本插件；外部工具随时可能改动仓库，所以真正的正确性来自写前的重新读取与指纹校验，而不是队列本身。
 
 `remoteSet` 是本地配置写操作：参数经 `protocol.js` 校验名称 / 地址（地址只做浅语法校验），再调用 `git remote set-url`（同名已存在）或 `git remote add`（不存在）写本地 Git 配置，随后重新读取 `StatusPayload` 返回；它不发起网络请求、不校验可达性，也不会自动 fetch，因此远程凭据 / 地址问题要等 push 时由 Git 报错。
+
+`repoInit` 是唯一的仓库创建写操作（非 Git 工作区空态的「立即初始化并刷新」）：它先重新解析目录，只有 `repo/no-git` 时才调用 `git init`（argv 数组、不经过 shell）。因此它只新增 `.git/`，不生成 README / LICENSE / .gitignore，也不改写任何工作区文件；目录已经是仓库时直接返回现有仓库（`created: false`），随后统一返回重新读取的 `StatusPayload`。
 
 ### 5.3 AI 归类
 

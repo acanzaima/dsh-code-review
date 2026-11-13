@@ -660,7 +660,14 @@ test('settings dialog uses DSH-style rows, controls and switch geometry', () => 
   const t = i18n.createI18n('zh');
   const tree = components.PanelSettings({
     t: t.t,
-    settings: { aiClassify: true, maxCandidates: 50, preclassify: false, locale: 'zh' },
+    settings: {
+      aiClassify: true,
+      maxCandidates: 50,
+      preclassify: false,
+      locale: 'zh',
+      customInstructionsRole: 'role instructions',
+      customInstructionsLogic: 'logic instructions',
+    },
     saving: false,
     modelsInfo: {
       routes: [{ provider: 'deepseek-account', providerName: 'DeepSeek Account', model: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }],
@@ -676,7 +683,7 @@ test('settings dialog uses DSH-style rows, controls and switch geometry', () => 
     return componentTypes.filter(function (value) { return value === name; }).length;
   };
   assert.ok(countOf('SettingRow') >= 4, 'settings are rendered as DSH-style rows');
-  assert.ok(countOf('SettingRow') === 5, 'five setting rows are rendered');
+  assert.ok(countOf('SettingRow') === 6, 'six setting rows are rendered');
   assert.ok(countOf('SettingRow') >= countOf('SettingSection') + 2, 'rows live inside sections');
   assert.ok(countOf('SettingSection') >= 2, 'AI grouping and interface are separate sections');
   assert.ok(componentTypes.includes('Switch'), 'pre-classify renders as the themed switch');
@@ -688,6 +695,14 @@ test('settings dialog uses DSH-style rows, controls and switch geometry', () => 
   // The shared kit is the single implementation: composed components re-export
   // its primitives instead of carrying duplicates.
   const ui = runtime.require('ui');
+  // Each grouping mode owns its instructions: two labelled textareas with the
+  // stored values, not one shared field.
+  const textareas = collectElements(tree).filter(function (element) { return element.type === ui.Textarea; });
+  assert.equal(textareas.length, 2, 'both grouping modes expose an instruction field');
+  assert.equal(textareas[0].props.ariaLabel, t.t('ai.settingsPromptRoleTitle'));
+  assert.equal(textareas[0].props.value, 'role instructions');
+  assert.equal(textareas[1].props.ariaLabel, t.t('ai.settingsPromptLogicTitle'));
+  assert.equal(textareas[1].props.value, 'logic instructions');
   const componentsModule = runtime.require('components');
   assert.equal(componentsModule.Button, ui.Button);
   assert.equal(componentsModule.IconButton, ui.IconButton);
@@ -777,6 +792,32 @@ test('the grouping selector offers the three modes through the shared Select', (
     'the toolbar trigger is compact enough for the action row');
   assert.match(stylesSource, /\.gr-combo-menu-anchor \{[^}]*position: absolute/,
     'the toolbar listbox is anchored instead of viewport-fixed');
+});
+
+test('Git grouping uses repository history, so staging never re-buckets rows', () => {
+  // The row checkbox is the stage control: index-state groups made the sections
+  // collapse under a bulk check, and even "untracked" changes the moment a new
+  // file is staged. Grouping by presence in HEAD is stable for the whole change
+  // set; staged state stays on the row checkboxes and the commit drawer.
+  assert.match(appSource, /var newPaths = new Set\(\);/);
+  assert.match(appSource, /scanned\.status === 'untracked' \|\| scanned\.change === 'added'/);
+  assert.match(appSource, /newPaths\.has\(entry\.path\)/);
+  assert.match(appSource, /id: 'tracked', label: t\('status\.tracked'\)/);
+  assert.match(appSource, /id: 'added', label: t\('status\.newFiles'\)/);
+  assert.match(appSource, /id: 'conflict', label: t\('status\.conflict'\)/);
+  assert.equal(/id: 'staged', label: t\('status\.staged'\)/.test(appSource), false,
+    'staged entries belong to the tracked group, not to a section of their own');
+  const i18n = createClientRuntime().require('i18n');
+  for (const locale of ['zh', 'en']) {
+    for (const key of ['status.tracked', 'status.newFiles', 'nav.gitGroupsHint']) {
+      const value = i18n.DICTIONARIES[locale][key];
+      assert.equal(typeof value, 'string', `${locale}: missing ${key}`);
+      assert.ok(value.length > 0, `${locale}: empty ${key}`);
+    }
+    const hint = i18n.DICTIONARIES[locale]['nav.gitGroupsHint'];
+    assert.match(hint, locale === 'zh' ? /已跟踪/ : /tracked/, `${locale}: the hint names the tracked group`);
+    assert.match(hint, locale === 'zh' ? /新增/ : /new/, `${locale}: the hint names the new-files group`);
+  }
 });
 
 test('settings disclosure retains the full data, operation and fallback explanations', () => {
@@ -1849,6 +1890,16 @@ test('the project header offers DSH-compatible open targets', () => {
   assert.equal(/leadingAction: openTargetButton/.test(appSource), false, 'the open-project control is back in the title bar, not the toolbar');
   assert.match(appSource, /id: 'open-file'/);
   assert.match(appSource, /id: 'reveal-file'/);
+  // A workspace without git still has a directory to open: the control targets
+  // the resolved cwd, and its empty state is a plain centred message (the cwd
+  // is not glued onto the hint text).
+  assert.match(appSource, /var openRoot = repoRoot \|\| \(snapshot && snapshot\.cwd \? snapshot\.cwd : null\);/);
+  assert.match(appSource, /openInApp\.openFolder\(null, appId, root\)/);
+  // The no-git copy stays a statement; the two actions sit in a centred row.
+  assert.match(appSource, /hint: t\('state\.noGitHint'\),/);
+  assert.match(appSource, /busyLabel: t\('state\.noGitInitializing'\)/);
+  assert.match(stylesSource, /\.gr-empty-action \{/);
+  assert.match(stylesSource, /\.gr-empty \{ flex: 1 1 auto;/);
   assert.match(componentsSource, /function OpenTargetButton/);
   assert.match(componentsSource, /className: 'gr-open-main'/);
   assert.match(uiSource, /props\.actions \? h\('div', \{ className: 'gr-modal-actions' \}/);
@@ -1860,6 +1911,26 @@ test('the project header offers DSH-compatible open targets', () => {
     for (const id of Object.keys(open.APP_LABEL_KEYS)) {
       const key = open.APP_LABEL_KEYS[id];
       assert.notEqual(translated(key), key, `${locale}: missing ${key}`);
+    }
+  }
+});
+
+test('the no-git empty state initialises the workspace in one click', () => {
+  const runtime = createClientRuntime();
+  const i18n = runtime.require('i18n');
+  // The action calls the host method and applies the status it returns.
+  assert.match(appSource, /rpc\.call\('repoInit', params\)/);
+  assert.match(appSource, /t\('state\.noGitInit'\)/);
+  assert.match(appSource, /t\('state\.noGitInitializing'\)/);
+  assert.match(appSource, /setNotice\(\{ tone: 'success', text: tRef\.current\('state\.noGitInitialized'\) \}\)/);
+  assert.match(stylesSource, /\.gr-empty-action \{/);
+  // A failed init is localized like every other protocol error.
+  assert.equal(i18n.ERROR_KEYS['repo/init-failed'], 'error.repoInitFailed');
+  for (const locale of ['zh', 'en']) {
+    for (const key of ['state.noGitHint', 'state.noGitInit', 'state.noGitInitializing', 'state.noGitInitialized', 'error.repoInitFailed']) {
+      const value = i18n.DICTIONARIES[locale][key];
+      assert.equal(typeof value, 'string', `${locale}: missing ${key}`);
+      assert.ok(value.length > 0, `${locale}: empty ${key}`);
     }
   }
 });

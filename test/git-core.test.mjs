@@ -299,6 +299,25 @@ test('resolveRepo: repo/no-git and repo/not-found', async (t) => {
   assert.deepEqual(status.entries, []);
 });
 
+test('init creates a repository without touching working-tree files', async (t) => {
+  const git = newGit();
+  // Outside the plugin checkout: a directory inside it would resolve to this
+  // repository instead of being a plain directory.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-code-review-init-'));
+  t.after(() => removeTree(dir));
+  fs.writeFileSync(path.join(dir, 'note.txt'), 'keep me\n');
+  await expectGitError(git.resolveRepo(dir), 'repo/no-git');
+
+  const repo = await git.init(dir);
+  assert.equal(path.resolve(repo.root), path.resolve(dir));
+  assert.ok(repo.branch, 'the new repository reports its branch');
+  const status = await git.status(repo);
+  assert.equal(entryOf(status, 'untracked:note.txt').status, 'untracked');
+  assert.equal(fs.readFileSync(path.join(dir, 'note.txt'), 'utf8'), 'keep me\n');
+  // Only .git is created: no README / LICENSE / .gitignore is invented.
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['.git', 'note.txt']);
+});
+
 // ---------------------------------------------------------------------------
 // staged vs unstaged separation
 // ---------------------------------------------------------------------------

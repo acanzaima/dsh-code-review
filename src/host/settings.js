@@ -43,9 +43,19 @@ function normalize(raw) {
   if (typeof source.reasoningEffort === 'string' && source.reasoningEffort.length > 0
     && source.reasoningEffort.length <= 64) next.reasoningEffort = source.reasoningEffort;
   if (source.locale === 'zh' || source.locale === 'en') next.locale = source.locale;
-  if (typeof source.customInstructions === 'string') {
-    const instructions = source.customInstructions.trim().slice(0, 4000);
-    if (instructions.length > 0) next.customInstructions = instructions;
+  // Each grouping mode owns its instructions. Settings files written before the
+  // split carry one shared `customInstructions` string: map it to both modes,
+  // which is exactly how it used to behave, until the next write persists the
+  // two fields.
+  const legacyInstructions = typeof source.customInstructions === 'string' ? source.customInstructions : null;
+  for (const [field, fallback] of [
+    ['customInstructionsRole', legacyInstructions],
+    ['customInstructionsLogic', legacyInstructions],
+  ]) {
+    const raw = typeof source[field] === 'string' ? source[field] : fallback;
+    if (typeof raw !== 'string') continue;
+    const instructions = raw.trim().slice(0, 4000);
+    if (instructions.length > 0) next[field] = instructions;
   }
   return next;
 }

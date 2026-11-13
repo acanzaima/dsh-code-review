@@ -2367,13 +2367,21 @@ __def('components', function (exports, require, React) {
     var preclassify = settings.preclassify === true;
     var locale = settings.locale === 'en' ? 'en' : 'zh';
 
+    /* AI grouping has two modes with different grouping principles, so each
+     * carries its own optional instructions; the old shared value is migrated
+     * to both by the host and then edited independently. */
     var instructionLimit = 4000;
-    var instructionState = React.useState(function () {
-      return typeof settings.customInstructions === 'string' ? settings.customInstructions : '';
-    });
-    var instructions = instructionState[0];
-    var setInstructions = instructionState[1];
-    var instructionLength = String(instructions || '').length;
+    function storedInstructions(field) {
+      return typeof settings[field] === 'string' ? settings[field] : '';
+    }
+    var roleInstructionState = React.useState(function () { return storedInstructions('customInstructionsRole'); });
+    var roleInstructions = roleInstructionState[0];
+    var setRoleInstructions = roleInstructionState[1];
+    var logicInstructionState = React.useState(function () { return storedInstructions('customInstructionsLogic'); });
+    var logicInstructions = logicInstructionState[0];
+    var setLogicInstructions = logicInstructionState[1];
+    var roleInstructionLength = String(roleInstructions || '').length;
+    var logicInstructionLength = String(logicInstructions || '').length;
 
     var configuredMax = Number(settings.maxCandidates);
     if (!Number.isFinite(configuredMax)) configuredMax = 50;
@@ -2383,12 +2391,40 @@ __def('components', function (exports, require, React) {
     var maxText = maxState[0];
     var setMaxText = maxState[1];
 
-    function commitInstructions() {
-      var next = String(instructions || '').trim();
-      var current = typeof settings.customInstructions === 'string' ? settings.customInstructions : '';
-      if (next !== current && typeof props.onChange === 'function') {
-        props.onChange({ customInstructions: next.length > 0 ? next : null });
-      }
+    function commitInstructions(field, value) {
+      var next = String(value || '').trim();
+      var current = storedInstructions(field);
+      if (next === current || typeof props.onChange !== 'function') return;
+      var update = {};
+      update[field] = next.length > 0 ? next : null;
+      props.onChange(update);
+    }
+
+    function instructionRow(config) {
+      return h(SettingRow, {
+        title: t(config.title),
+        description: t(config.description),
+        full: true,
+      },
+        h('div', { className: 'gr-textarea-wrap' },
+          h(Textarea, {
+            rows: 3,
+            maxLength: instructionLimit,
+            value: config.value,
+            disabled: saving,
+            placeholder: t(config.placeholder),
+            ariaLabel: t(config.title),
+            onChange: function (event) {
+              config.onChange(event.target.value);
+            },
+            onBlur: function () {
+              commitInstructions(config.field, config.value);
+            },
+          }),
+          h('div', { className: 'gr-textarea-meta' },
+            h('span', {
+              className: cx('gr-char-count', config.length >= instructionLimit - 200 && 'gr-char-count-near'),
+            }, t('ai.settingsChars', { n: formatCount(config.length) })))));
     }
 
     function commitMax() {
@@ -2478,28 +2514,24 @@ __def('components', function (exports, require, React) {
                 onChange: patch,
               }),
               modelHelper),
-            h(SettingRow, {
-              title: t('ai.settingsPromptTitle'),
-              description: t('ai.settingsPromptDesc'),
-              full: true,
-            },
-              h('div', { className: 'gr-textarea-wrap' },
-                h(Textarea, {
-                  rows: 3,
-                  maxLength: instructionLimit,
-                  value: instructions,
-                  disabled: saving,
-                  placeholder: t('ai.settingsPromptPlaceholder'),
-                  ariaLabel: t('ai.settingsPromptTitle'),
-                  onChange: function (event) {
-                    setInstructions(event.target.value);
-                  },
-                  onBlur: commitInstructions,
-                }),
-                h('div', { className: 'gr-textarea-meta' },
-                  h('span', {
-                    className: cx('gr-char-count', instructionLength >= instructionLimit - 200 && 'gr-char-count-near'),
-                  }, t('ai.settingsChars', { n: formatCount(instructionLength) }))))),
+            instructionRow({
+              field: 'customInstructionsRole',
+              title: 'ai.settingsPromptRoleTitle',
+              description: 'ai.settingsPromptRoleDesc',
+              placeholder: 'ai.settingsPromptRolePlaceholder',
+              value: roleInstructions,
+              length: roleInstructionLength,
+              onChange: setRoleInstructions,
+            }),
+            instructionRow({
+              field: 'customInstructionsLogic',
+              title: 'ai.settingsPromptLogicTitle',
+              description: 'ai.settingsPromptLogicDesc',
+              placeholder: 'ai.settingsPromptLogicPlaceholder',
+              value: logicInstructions,
+              length: logicInstructionLength,
+              onChange: setLogicInstructions,
+            }),
             h(SettingRow, {
               title: t('ai.settingsMax'),
               description: t('ai.settingsMaxDesc'),

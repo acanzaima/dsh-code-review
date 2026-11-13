@@ -632,6 +632,19 @@ export function createGit(exec) {
     return { root, gitDir, branch, detached: branch === null, headSha, upstream, ahead, behind, remotes: await readRemotes(root), worktree: gitDir !== commonDir };
   }
 
+  /**
+   * Initialise a repository in an existing plain directory. Only `.git/` is
+   * written: working-tree files are never created, staged or committed, so the
+   * caller's workspace stays byte-identical. Returns the freshly resolved
+   * RepoRef instead of making the caller guess root, branch or HEAD.
+   */
+  async function init(dir) {
+    const root = path.resolve(dir === undefined || dir === null ? process.cwd() : String(dir));
+    const result = await invoke(['init'], { cwd: root });
+    if (result.code !== 0) throw gitFailure('git init failed', ['init'], result, 'repo/init-failed');
+    return resolveRepo(root);
+  }
+
   // --- status ---------------------------------------------------------------
 
   function emptyStatusPayload(cwd, error) {
@@ -1679,6 +1692,7 @@ export function createGit(exec) {
 
   return {
     resolveRepo,
+    init,
     status,
     diff,
     stage,

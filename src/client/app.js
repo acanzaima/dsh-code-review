@@ -425,7 +425,8 @@ __def('app', function (exports, require, React) {
     if (value && typeof value.provider === 'string' && value.provider.length > 0) result.provider = value.provider;
     if (value && typeof value.model === 'string' && value.model.length > 0) result.model = value.model;
     if (value && typeof value.reasoningEffort === 'string' && value.reasoningEffort.length > 0) result.reasoningEffort = value.reasoningEffort;
-    if (value && typeof value.customInstructions === 'string' && value.customInstructions.length > 0) result.customInstructions = value.customInstructions;
+    if (value && typeof value.customInstructionsRole === 'string' && value.customInstructionsRole.length > 0) result.customInstructionsRole = value.customInstructionsRole;
+    if (value && typeof value.customInstructionsLogic === 'string' && value.customInstructionsLogic.length > 0) result.customInstructionsLogic = value.customInstructionsLogic;
     if (value && typeof value.defaultModel === 'string' && value.defaultModel.length > 0) result.defaultModel = value.defaultModel;
     return result;
   }
@@ -448,7 +449,8 @@ __def('app', function (exports, require, React) {
     if (typeof value.provider === 'string') settings.provider = value.provider;
     if (typeof value.model === 'string') settings.model = value.model;
     if (typeof value.reasoningEffort === 'string' && value.reasoningEffort.length > 0) settings.reasoningEffort = value.reasoningEffort;
-    if (typeof value.customInstructions === 'string') settings.customInstructions = value.customInstructions;
+    if (typeof value.customInstructionsRole === 'string') settings.customInstructionsRole = value.customInstructionsRole;
+    if (typeof value.customInstructionsLogic === 'string') settings.customInstructionsLogic = value.customInstructionsLogic;
     return settings;
   }
 
@@ -496,7 +498,7 @@ __def('app', function (exports, require, React) {
     if (!rpc) return Promise.resolve();
     state.settingsStore.set(function (current) {
       var nextValue = {};
-      var keys = ['aiClassify', 'aiGrouping', 'commitMode', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructions', 'defaultModel'];
+      var keys = ['aiClassify', 'aiGrouping', 'commitMode', 'preclassify', 'maxCandidates', 'provider', 'model', 'reasoningEffort', 'customInstructionsRole', 'customInstructionsLogic', 'defaultModel'];
       for (var index = 0; index < keys.length; index += 1) {
         if (current.value && current.value[keys[index]] !== undefined) nextValue[keys[index]] = current.value[keys[index]];
       }
@@ -518,9 +520,13 @@ __def('app', function (exports, require, React) {
           if (patch.reasoningEffort === null) delete nextValue.reasoningEffort;
           else nextValue.reasoningEffort = patch.reasoningEffort;
         }
-        if ('customInstructions' in patch) {
-          if (patch.customInstructions === null) delete nextValue.customInstructions;
-          else nextValue.customInstructions = patch.customInstructions;
+        if ('customInstructionsRole' in patch) {
+          if (patch.customInstructionsRole === null) delete nextValue.customInstructionsRole;
+          else nextValue.customInstructionsRole = patch.customInstructionsRole;
+        }
+        if ('customInstructionsLogic' in patch) {
+          if (patch.customInstructionsLogic === null) delete nextValue.customInstructionsLogic;
+          else nextValue.customInstructionsLogic = patch.customInstructionsLogic;
         }
       }
       return {
@@ -618,6 +624,8 @@ __def('app', function (exports, require, React) {
     var [snapshot, setSnapshot] = useState(null);
     var [loading, setLoading] = useState(false);
     var [refreshError, setRefreshError] = useState(null);
+    /* A one-click `git init` for a workspace that is not a repository yet. */
+    var [initBusy, setInitBusy] = useState(false);
     var [selectedKey, setSelectedKey] = useState(null);
     var [diffState, setDiffState] = useState({ key: null, loading: false, error: null, value: null });
     var [diffNonce, setDiffNonce] = useState(0);
@@ -756,6 +764,32 @@ __def('app', function (exports, require, React) {
       });
     }, [sessionId, applyStatus, target && target.cwd]);
 
+    /* One-click repository initialisation for the no-git empty state. The host
+     * runs plain `git init` (never README / LICENSE / .gitignore): this panel
+     * reviews an existing workspace, so only `.git/` may be created and every
+     * file must stay untouched. The reply already carries the post-init status. */
+    var initRepository = useCallback(function () {
+      var rpc = state.runtime.rpc;
+      if (!rpc || initBusy) return;
+      var generation = targetGenerationRef.current;
+      var params = sessionId ? { sessionId: sessionId } : {};
+      if (!sessionId && target && target.cwd) params.cwd = target.cwd;
+      setInitBusy(true);
+      setOperationError(null);
+      rpc.call('repoInit', params).then(function (result) {
+        if (generation !== targetGenerationRef.current) return;
+        refreshSeqRef.current += 1;
+        if (result && result.status) applyStatus(result.status);
+        else refresh({ silent: true, keepSelectionOnly: true });
+        setNotice({ tone: 'success', text: tRef.current('state.noGitInitialized') });
+      }).catch(function (error) {
+        if (generation !== targetGenerationRef.current) return;
+        setOperationError({ code: error && error.code, message: describeError(error, tRef.current) });
+      }).then(function () {
+        setInitBusy(false);
+      });
+    }, [sessionId, target && target.cwd, initBusy, applyStatus, refresh]);
+
     // Initial load: invalidate every in-flight request and drop any previous
     // snapshot immediately, so one window never shows another repository's
     // state. Each window mounts its own instance, so this mostly runs on mount.
@@ -776,6 +810,7 @@ __def('app', function (exports, require, React) {
       setDiffState({ key: null, loading: false, error: null, value: null });
       setDiffNonce(0);
       setBusy(null);
+      setInitBusy(false);
       setCommitBusy(false);
       setCommitOpen(false);
       setCommitMessage('');
@@ -1003,26 +1038,38 @@ __def('app', function (exports, require, React) {
      * disabled while this is true; per-file operations stay available. */
     var truncated = !!(snapshot && summary && summary.truncated === true);
 
+    /* Group by a property staging cannot change: whether the path already
+     * exists in the repository history. The row checkbox is the stage control,
+     * so index-state groups re-bucketed the list under the pointer on every
+     * click, and bulk checking collapsed two sections into one. "Untracked" is
+     * not stable either: staging a new file makes it tracked immediately. A path
+     * that is absent from HEAD stays in the new-files section for the whole
+     * change set, staged or not; staged state stays visible on the row
+     * checkbox, the summary and the commit drawer. Conflicts keep their own
+     * section because they are never part of a commit. */
     var gitGroups = useMemo(function () {
-      var buckets = { staged: [], unstaged: [], untracked: [], conflict: [] };
+      var newPaths = new Set();
+      for (var scan = 0; scan < entries.length; scan += 1) {
+        var scanned = entries[scan];
+        if (scanned.status === 'untracked' || scanned.change === 'added' || scanned.change === 'copied') {
+          newPaths.add(scanned.path);
+        }
+      }
+      var tracked = [];
+      var added = [];
+      var conflicts = [];
       for (var index = 0; index < entries.length; index += 1) {
         var entry = entries[index];
-        var bucket = buckets[entry.status];
-        if (bucket) bucket.push(entry);
+        if (entry.status === 'conflict') conflicts.push(entry);
+        else if (newPaths.has(entry.path)) added.push(entry);
+        else tracked.push(entry);
       }
       var wanted = [
-        { id: 'staged', label: t('status.staged'), tone: 'staged' },
-        { id: 'unstaged', label: t('status.unstaged'), tone: 'unstaged' },
-        { id: 'untracked', label: t('status.untracked'), tone: 'untracked' },
-        { id: 'conflict', label: t('status.conflict'), tone: 'conflict' },
+        { id: 'tracked', label: t('status.tracked'), tone: 'tracked', entries: tracked },
+        { id: 'added', label: t('status.newFiles'), tone: 'untracked', entries: added },
+        { id: 'conflict', label: t('status.conflict'), tone: 'conflict', entries: conflicts },
       ];
-      var result = [];
-      for (var at = 0; at < wanted.length; at += 1) {
-        var group = wanted[at];
-        if (buckets[group.id].length === 0) continue;
-        result.push({ id: group.id, label: group.label, tone: group.tone, entries: buckets[group.id] });
-      }
-      return result;
+      return wanted.filter(function (group) { return group.entries.length > 0; });
     }, [entries, t]);
 
     var aiGroups = useMemo(function () {
@@ -2183,8 +2230,11 @@ __def('app', function (exports, require, React) {
     /* Directory applications come from DSH's own catalog route (the session
      * header split button uses it); specific files go through the optional
      * Session Remote, so remote/SSH sessions simply hide the file actions. */
+    /* A workspace without git still owns a directory: the chrome keeps the
+     * open-project button and targets the resolved cwd instead of a repo root. */
+    var openRoot = repoRoot || (snapshot && snapshot.cwd ? snapshot.cwd : null);
     useEffect(function () {
-      if (!open || !repoRoot) return undefined;
+      if (!open || !openRoot) return undefined;
       var alive = true;
       setOpenTargetState({ apps: [], defaultId: '', loading: true, failed: false });
       openInApp.folderApps().then(function (apps) {
@@ -2202,13 +2252,14 @@ __def('app', function (exports, require, React) {
       return function () {
         alive = false;
       };
-    }, [open, repoRoot]);
+    }, [open, openRoot]);
 
     var openProject = useCallback(function (appId) {
-      var repo = snapshotRef.current && snapshotRef.current.repo;
-      if (!repo || !appId) return;
+      var current = snapshotRef.current;
+      var root = current ? (current.repo ? current.repo.root : current.cwd) : null;
+      if (!root || !appId) return;
       setOpenTargetBusy(true);
-      openInApp.openFolder(null, appId, repo.root).then(function (ok) {
+      openInApp.openFolder(null, appId, root).then(function (ok) {
         setOpenTargetBusy(false);
         if (!ok) {
           setNotice({ tone: 'error', text: t('open.failed') });
@@ -2234,9 +2285,8 @@ __def('app', function (exports, require, React) {
      * chrome (title bar, where it lived before the floating-window refactor), but
      * its data comes from this window body's snapshot. Render it here and report
      * the element to the parent window so the chrome stays a thin shell. */
-    var repoRootKey = snapshot && snapshot.repo ? snapshot.repo.root : null;
     var openTargetButton = useMemo(function () {
-      if (!repoRootKey) return null;
+      if (!openRoot) return null;
       var applications = openTargetState.apps.map(function (id) {
         return { id: id, label: t('openApp.' + id), iconSrc: openInApp.appIconUrl(id) };
       });
@@ -2250,7 +2300,7 @@ __def('app', function (exports, require, React) {
         busy: openTargetBusy,
         onOpen: openProject,
       });
-    }, [t, repoRootKey, openTargetState, openTargetBusy, openProject]);
+    }, [t, openRoot, openTargetState, openTargetBusy, openProject]);
     useEffect(function () {
       if (typeof props.onHeadAction === 'function') props.onHeadAction(openTargetButton);
     }, [openTargetButton, props.onHeadAction]);
@@ -2407,8 +2457,29 @@ __def('app', function (exports, require, React) {
         t: t,
         tone: 'warn',
         title: t('state.noGit'),
-        hint: t('state.noGitHint') + '\n' + (snapshot.cwd || ''),
-        action: h(components.Button, { t: t, variant: 'default', size: 'sm', onClick: function () { refresh({}); } }, t('app.refresh')),
+        /* The copy states the situation and the outcome; the two actions live in
+         * their own centred row so they keep their hierarchy and never break a
+         * sentence across lines. */
+        hint: t('state.noGitHint'),
+        action: [
+          h(components.Button, {
+            key: 'refresh',
+            t: t,
+            variant: 'default',
+            size: 'sm',
+            disabled: initBusy,
+            onClick: function () { refresh({}); },
+          }, t('app.refresh')),
+          h(components.Button, {
+            key: 'init',
+            t: t,
+            variant: 'primary',
+            size: 'sm',
+            busy: initBusy,
+            busyLabel: t('state.noGitInitializing'),
+            onClick: initRepository,
+          }, t('state.noGitInit')),
+        ],
       }));
     } else if (snapshot && snapshot.state === 'error') {
       overlayStates.push(h(components.EmptyState, {
