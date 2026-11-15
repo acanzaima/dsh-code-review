@@ -24,7 +24,7 @@
 ```mermaid
 flowchart LR
     subgraph browser["浏览器 · DSH Web UI"]
-        slots["插槽宿主<br/>shell.overlay / conversation.input.left"]
+        slots["插槽宿主<br/>shell.overlay / conversation.input.left / conversation.composer.dock"]
         client["client.js<br/>UI、diff 渲染、RPC"]
         slots --> client
     end
@@ -76,13 +76,13 @@ flowchart LR
 | `src/client/ui.js` | 基础组件（design kit）：按钮/图标按钮/开关/选择器/输入框/文本域/对话框/菜单键帽/搜索框/标签，以及设置页的 Section/Row/Hint 布局原语 | 只消费主题令牌与 `util`；components 与 app 通过它获得统一控件 |
 | `src/client/util.js` | 通用工具：class 名、路径拆分、计数格式化、防抖、稳定序列化等 | 不依赖 DOM，可被其它模块复用 |
 | `src/client/i18n.js` | 内置中英文字典与翻译函数 | 可见字符串全部经过字典；语言可在窗口设置中固定 |
-| `src/client/state.js` | 进程内运行时与多窗口 / 设置两个外部 store | 窗口列表、焦点顺序、最小化 / 最大化标记与几何尺寸都在这份 store 里；根插槽的窗口层与会话插槽的输入框按钮共享同一份状态 |
+| `src/client/state.js` | 进程内运行时与多窗口 / 设置两个外部 store | 窗口列表、焦点顺序、最小化 / 最大化标记、几何尺寸与窗口身份根（`root`：仓库根，非 Git 工作区时为工作区目录）都在这份 store 里；根插槽的窗口层、会话插槽的输入框按钮与输入框下方的收起控件（`DockEntry` / `DockMenuEntry`）共享同一份状态 |
 | `src/client/rpc.js` | Host 协议的客户端：`POST /api/code-review`、封套解析、错误对象 | 浏览器 Cookie 由 DSH 管理，客户端不接触令牌 |
 | `src/client/open-in-app.js` | 复用 DSH 的 open-in-app：目录应用目录与启动请求，以及 `remote.session` 的打开 / 显示位置调用 | 不自己起进程；`remote.session` 通过可选 `ctx.get` 获取，不可用时只隐藏文件级动作 |
 | `src/client/diff.js` | 纯 diff 模型：并排行构建、折叠区、语法高亮、变更锚点与导航 | 无 React、无 DOM，可在 Node 中直接测试 |
 | `src/client/diff-view.js` | `DiffPane` 渲染器：虚拟化滚动、行号、横向独立滚动、minimap、紧凑变更计数（完整文案在 tooltip 与屏幕阅读器文本中）、变更块菜单 | 消费 `diff.js` 的模型，不重新计算 diff |
 | `src/client/components.js` | 组合组件：TopBar（分支信息菜单 + 变更摘要）、StatusBar（常驻底栏）、FileNav（含提交勾选框与标题行三态全选）、菜单/对话框、提交抽屉（含 AI 草稿按钮与 split 提交控件）、推送对话框、窗口内设置（基础元素来自 `ui.js`） | 对话框接受 `scoped` 模式：`scoped` 时只覆盖所在窗口并只在窗口内捕获焦点，未指定时沿用整页对话框行为；不做请求；状态与回调由 `app.js` 传入 |
-| `src/client/app.js` | 窗口层与窗口状态机、窗口外壳（拖动 / 缩放 / 最小化 / 最大化）、视口几何钳制、按窗口作用域的键盘交互与窗口内对话框、请求编排、插槽注册与 `apply(ctx)` | 暴露 `apply` 与 `inject: ['slots']`；是唯一注册插槽的模块；键盘监听挂在窗口根 DOM 节点而不是 `document` |
+| `src/client/app.js` | 窗口层与窗口状态机、窗口外壳（拖动 / 缩放 / 最小化 / 最大化）、视口几何钳制、收起控件与列表弹层（`DockEntry` / `DockMenuEntry`）、按窗口作用域的键盘交互与窗口内对话框、请求编排、插槽注册与 `apply(ctx)` | 暴露 `apply` 与 `inject: ['slots']`；是唯一注册插槽的模块；键盘监听挂在窗口根 DOM 节点而不是 `document` |
 
 客户端源码的拼接顺序固定为 `util → i18n → state → rpc → open-in-app → diff → diff-view → styles → ui → components → app`，`app` 必须是最后一个。规则与理由见 [protocol.md](./protocol.md) 第 2 节与 [development.md](./development.md) 第 5 节。
 
@@ -197,8 +197,10 @@ sequenceDiagram
 | `shell.overlay` | `dsh-code-review-styles` | 0 | 常驻 `<style>` 节点，注入整个样式表 | 页面加载后常驻 |
 | `shell.overlay` | `dsh-code-review-panel` | 120 | 全帧窗口层，渲染零 / 一 / 多个浮动审阅窗口；没有模态遮罩 | 常驻注册，随窗口 store 显隐 |
 | `conversation.input.left` | `dsh-code-review-composer` | 10 | 输入框工具行的打开按钮，接收 `sessionId` prop | 会话作用域，位于权限 / 模式控件之后、模型选择器之前 |
+| `conversation.composer.dock` | `dsh-code-review-dock` | -10 | 收起控件的分离控件：左半 = 当前收起窗口（点击还原），右半 = `+N`（其余收起窗口，点击展开列表）；排在 DSH 自己的 activity / usage 之前 | 会话作用域，输入框下方的环境条 |
+| `shell.overlay` | `dsh-code-review-dock-menu` | 140 | 收起窗口列表弹层：按创建顺序列出、可还原 / 关闭、超长时内部滚动；无标题栏与关闭按钮（点击外部或 `Esc` 收起），按 trigger 矩形定位 | 常驻注册，随弹层开关显隐 |
 
-插件**不注册** `settings.section`：所有配置都在审阅窗口内的设置对话框中完成。两个 `shell.overlay` 条目分开注册，是因为样式表必须在没有任何窗口、只剩输入框按钮时仍然生效。
+插件**不注册** `settings.section`：所有配置都在审阅窗口内的设置对话框中完成。三个 `shell.overlay` 条目分开注册：样式表必须在没有任何窗口、只剩输入框按钮时仍然生效；列表弹层不能画在 composer 里（DSH 的 docked composer 会裁掉自己的后代）。收起控件用 list 插槽而不是 `shell.bottom`（单占位，已被 profile 里的 inspector 占用），这样既不用和别的插件抢座位，又能只占一个分离控件的宽度；代价是未选中会话时控件不渲染，窗口仍留在内存里。同一时间最多 24 个窗口由 `MAX_REVIEW_WINDOWS` 限制，达到上限时 `openPanel` 返回 `null`。
 
 ## 9. 安全边界
 
@@ -219,9 +221,9 @@ sequenceDiagram
 - **按块操作范围有限**：只支持普通文本文件；二进制、符号链接、子模块、仅模式变化、冲突、重命名 / 复制和超限文件会明确说明原因并拒绝，而不是退回整文件操作；被截断的 diff 会标注只显示补丁范围。
 - **没有图片 diff**：二进制文件只显示提示与行数统计。
 - **窗口只在内存**：打开的窗口、位置以及最小化 / 最大化状态只保存在当前页面内存中，刷新页面即全部关闭；这里不做窗口状态持久化。
-- **不是操作系统级窗口**：插件 API 只在 DSH 页面内渲染，因此窗口是页面内的浮动层，不是独立的操作系统窗口，也不能打开第二个浏览器窗口。窗口层顶部让出 `--dsh-frame-top-clearance` 对应的 DSH 标题条，几何计算把“工作区”定义为标题条下方的内容区：拖动四边受限、窗口不会被拖到标题栏下方或窗口外，最大化铺满整个内容区。
+- **不是操作系统级窗口**：插件 API 只在 DSH 页面内渲染，因此窗口是页面内的浮动层，不是独立的操作系统窗口，也不能打开第二个浏览器窗口。窗口层顶部让出 `--dsh-frame-top-clearance` 对应的 DSH 标题条，几何计算把“工作区”定义为标题条下方的内容区：拖动四边受限、窗口不会被拖到标题栏下方或窗口外，最大化铺满整个内容区。最小化的窗口不再绘制，只在输入框下方的环境条左端留一个分离控件：左半是当前收起窗口（点击还原），右半是 `+N`（其余收起窗口，点击在其上方弹出可滚动列表，弹层在 `shell.overlay` 里）；这条任务栏不去占 `shell.bottom` 这类单占位座位。同时打开的窗口数上限为 24（`MAX_REVIEW_WINDOWS`）。
 - **窗口之间状态独立、设置共享**：每个窗口的 UI 状态（当前选中文件、diff 快照、窗口内对话框）互不影响；插件设置在所有窗口间共享。
-- **关窗始终手动**：切换会话 / 工作区、滚动或操作窗口后面的页面都不会自动关闭窗口，窗口只能通过标题栏的关闭按钮关闭。
+- **关窗始终手动**：切换会话 / 工作区、滚动或操作窗口后面的页面都不会自动关闭窗口，窗口只能通过标题栏的关闭按钮或收起窗口列表里的关闭按钮关闭。
 - **写链只约束本插件**：外部工具可在操作之间改动仓库，所以每次写都重新校验，而不是依赖队列。
 - **AI 默认关闭、两种视角同源**：默认按 Git 状态分组，不选择 AI 模式时插件不会向模型发送任何数据；「按职能」与「按功能逻辑」共用同一份有界输入和同一份缓存键（额外包含分组模式与该模式的附加要求），功能逻辑分类不读取文件内容，因此仍属于导航辅助而不是代码理解；归类失败总是回退到 Git 状态分组。
 - **提交信息草稿是显式动作**：不点击提交区的 AI 按钮就不会发送任何代码内容；草稿只填入可编辑的提交信息框，不自动提交。由于 patch 必然包含已暂存内容的真实文本，涉密仓库需要自行决定是否使用。

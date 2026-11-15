@@ -2,7 +2,8 @@
 
 > Review, stage and commit the uncommitted Git changes of the repository that
 > belongs to the current DSH conversation — with non-modal floating review
-> windows, side-by-side diffs, file and hunk operations, a persistent
+> windows that minimize into a split control under the composer (up to 24 open
+> panels), side-by-side diffs, file and hunk operations, a persistent
 > commit / commit-and-push split control in the commit drawer plus a one-click
 > AI commit-and-push toolbar action, push with in-panel remote setup, one-click
 > initialise for workspaces that are not Git repositories yet, optional

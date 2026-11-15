@@ -389,6 +389,7 @@ __def('components', function (exports, require, React) {
     var hoverState = React.useState(false);
     var hovered = hoverState[0];
     var setHovered = hoverState[1];
+    var label = props.title ? String(props.title) : t('app.open');
     var style = {
       width: '28px',
       height: '28px',
@@ -409,11 +410,16 @@ __def('components', function (exports, require, React) {
       appearance: 'none',
       WebkitAppearance: 'none',
     };
+    if (props.disabled) {
+      style.opacity = '0.45';
+      style.cursor = 'default';
+    }
     return h('button', {
       type: 'button',
       className: 'gr-review-button',
-      title: t('app.open'),
-      'aria-label': t('app.open'),
+      title: label,
+      'aria-label': label,
+      disabled: props.disabled ? true : undefined,
       onClick: props.onOpen,
       onMouseEnter: function () { setHovered(true); },
       onMouseLeave: function () { setHovered(false); },
@@ -2837,6 +2843,7 @@ __def('components', function (exports, require, React) {
   exports.IconArrowDown = IconArrowDown;
   exports.IconMinus = IconMinus;
   exports.IconClose = IconClose;
+  exports.IconReview = IconReview;
   exports.IconMaximize = IconMaximize;
   exports.IconRestore = IconRestore;
   exports.IconChevronDown = IconChevronDown;

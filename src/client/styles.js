@@ -124,26 +124,73 @@ __def('styles', function (exports) {
 .gr-window-btn-close:hover:not(:disabled) { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); }
 .gr-window-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .gr-window .gr-panel-body { border: 0; border-radius: 0; flex: 1 1 auto; min-height: 0; }
-/* Minimized: collapse to the title bar; JS clamps the strip against its live
- * height and re-clamps the restored geometry. A strip is not resizable. */
-.gr-window-minimized { min-height: 0; }
-.gr-window-minimized .gr-window-body { display: none; }
-.gr-window-minimized .gr-window-resize-e,
-.gr-window-minimized .gr-window-resize-s,
-.gr-window-minimized .gr-window-resize-se { display: none; }
+/* Minimized: the window keeps its record but leaves the layer entirely — the
+ * dock tab under the composer owns it until it is restored, so nothing is
+ * painted and no gesture can reach it. */
+.gr-window-minimized { display: none; }
 /* A maximized window fills the work area: resize handles would be a no-op. */
 .gr-window-maximized .gr-window-resize { display: none; }
-/* Resize handles are invisible edges around the window; the -se corner sits
- * above the two edges so the corner gesture always wins. */
+/* Resize handles are invisible strips on all four edges and corners; corners
+ * sit above the edges so the corner gesture always wins. */
 .gr-window-resize { position: absolute; z-index: 30; touch-action: none; }
 .gr-window-resize-e { top: 0; right: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.gr-window-resize-w { top: 0; left: 0; bottom: 0; width: 6px; cursor: ew-resize; }
 .gr-window-resize-s { left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
+.gr-window-resize-n { left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize; }
 .gr-window-resize-se { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; z-index: 31; }
-.gr-window-resize-e:hover, .gr-window-resize-s:hover, .gr-window-resize-se:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
+.gr-window-resize-sw { left: 0; bottom: 0; width: 14px; height: 14px; cursor: nesw-resize; z-index: 31; }
+.gr-window-resize-ne { right: 0; top: 0; width: 14px; height: 14px; cursor: nesw-resize; z-index: 31; }
+.gr-window-resize-nw { left: 0; top: 0; width: 14px; height: 14px; cursor: nwse-resize; z-index: 31; }
+.gr-window-resize:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
 /* Scoped dialogs (confirm / push / shortcuts) cover only their own window: the
  * absolute backdrop must beat the base fixed one. */
 .gr-modal-backdrop.gr-modal-backdrop-scoped { position: absolute; inset: 0; z-index: 40; padding: 16px; }
 .gr-push-layer.gr-modal-backdrop-scoped { position: absolute; inset: 0; z-index: 40; }
+
+/* ---------- minimized window dock (composer.dock + overlay popover) ---------- */
+/* One split control in the ambient row under the composer card: the window the
+ * user is on (left half, restores on click) beside a constant-width +N half for
+ * the remaining parked windows (opens the list). It follows DSH's own split
+ * open-target control and its row of status entries: no box in the resting
+ * state, a plain fill on hover, never a border that would resize the row.
+ * Minimized windows keep their record (and restore footprint) but are not drawn
+ * (see the .gr-window-minimized rule above). */
+.gr-dock { display: inline-flex; align-items: center; min-width: 0; }
+.gr-dock-primary, .gr-dock-more { display: inline-flex; align-items: center; gap: 4px; height: 20px; margin: 0; padding: 0 6px; border: 0; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11.5px; line-height: 1; cursor: pointer; white-space: nowrap; }
+.gr-dock-primary { border-radius: var(--dsw-radius-sm, 6px); max-width: 260px; min-width: 0; }
+/* Square the joint beside the +N half so the pair reads as one split control. */
+.gr-dock-primary:has(+ .gr-dock-more) { border-radius: var(--dsw-radius-sm, 6px) 0 0 var(--dsw-radius-sm, 6px); }
+/* The split divider mirrors DSH's open-target chevron cell. */
+.gr-dock-more { padding: 0 5px; border-left: .5px solid var(--dsw-alias-border-l2); border-radius: 0 var(--dsw-radius-sm, 6px) var(--dsw-radius-sm, 6px) 0; }
+.gr-dock-primary:hover, .gr-dock-more:hover, .gr-dock-more-open { background: var(--dsw-alias-interactive-bg-hover); }
+.gr-dock-primary:focus-visible, .gr-dock-more:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
+.gr-dock-primary .gr-review-title { gap: 5px; min-width: 0; }
+/* The row's own entries draw a plain glyph, not the boxed avatar the window
+ * title uses: keep the same weight so the split control reads as one of them.
+ * 14px matches the composer entry's glyph (the 28px circular button around it
+ * is what makes that one look smaller), and the colour follows the row's
+ * secondary tone instead of the window title's primary ink. */
+.gr-dock-primary .gr-repo-icon { width: 16px; height: 16px; color: inherit; border: 0; background: transparent; }
+.gr-dock-primary .gr-ico { width: 14px; height: 14px; }
+.gr-dock-primary .gr-review-title-name { max-width: 220px; }
+.gr-dock-count { font-variant-numeric: tabular-nums; }
+.gr-dock-more .gr-ico { width: 12px; height: 12px; flex: 0 0 auto; }
+/* The list is a popover in the frame-level overlay layer: the docked composer
+ * clips its own descendants, so a menu drawn inside the composer would be cut
+ * off. It scrolls once the parked windows outgrow the panel height. */
+.gr-dock-menu-layer { position: fixed; inset: 0; z-index: 240; pointer-events: none; }
+.gr-dock-menu { position: fixed; display: flex; flex-direction: column; width: min(320px, calc(100vw - 24px)); max-height: min(60vh, 420px); overflow: hidden; pointer-events: auto; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3, 0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent))); outline: none; }
+/* No header row: the list is the whole panel, like DSH's own status popovers. */
+.gr-dock-menu-list { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px; scrollbar-width: thin; }
+.gr-dock-menu-list::-webkit-scrollbar { width: 8px; }
+.gr-dock-row { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; min-width: 0; border-radius: var(--dsw-radius-sm, 6px); }
+.gr-dock-row:hover { background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2)); }
+.gr-dock-restore { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; padding: 5px 6px; border: 0; border-radius: var(--dsw-radius-sm, 6px); background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.gr-dock-restore:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -1px; }
+.gr-dock-restore .gr-review-title { gap: 6px; min-width: 0; }
+.gr-dock-restore .gr-repo-icon { width: 20px; height: 20px; flex: 0 0 auto; }
+.gr-dock-restore .gr-review-title-name { max-width: 100%; }
+.gr-dock-close { width: 24px; height: 24px; flex: 0 0 auto; }
 
 /* ---------- top bar ---------- */
 /* One line on wide panels; when the panel gets narrow the action cluster wraps

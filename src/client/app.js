@@ -35,7 +35,9 @@ __def('app', function (exports, require, React) {
   // scoped), not a modal: every reviewed target owns one independent,
   // manually closable desktop-style window, so DSH stays usable behind it and
   // two workspaces can be reviewed side by side. Geometry is kept in memory for
-  // the page lifetime and remembered per target across close/reopen.
+  // the page lifetime and remembered per target across close/reopen. A
+  // minimized window leaves the layer and becomes one tab in the ambient dock
+  // row under the composer card (`conversation.composer.dock`).
   // ---------------------------------------------------------------------------
   var WINDOW_MARGIN = 16;
   var WINDOW_CASCADE_STEP = 26;
@@ -113,27 +115,6 @@ __def('app', function (exports, require, React) {
   }
 
   /**
-   * A minimized window renders as its title strip only: the stored rectangle is
-   * the footprint it restores to, but on screen it occupies just
-   * WINDOW_HEAD_HEIGHT. Clamp the live origin and width against the work area
-   * with that strip footprint — dragging a minimized window may otherwise never
-   * reach the lower part of the work area — while keeping the stored size intact
-   * as the restore footprint.
-   */
-  function clampMinimizedWindowRect(rect, viewport) {
-    var vp = viewport || viewportSize();
-    var size = clampWindowSize(rect && rect.width, rect && rect.height, vp);
-    var x = rect && Number.isFinite(rect.x) ? rect.x : 0;
-    var y = rect && Number.isFinite(rect.y) ? rect.y : 0;
-    return {
-      x: util.clamp(Math.round(x), 0, Math.max(0, vp.width - size.width)),
-      y: util.clamp(Math.round(y), 0, Math.max(0, vp.height - WINDOW_HEAD_HEIGHT)),
-      width: size.width,
-      height: size.height,
-    };
-  }
-
-  /**
    * Drag position: the window stays wholly inside the work area. Dragging is
    * not allowed to slide a window under the DSH title strip or past any frame
    * edge, so every title-bar button remains reachable and the DSH chrome is
@@ -152,25 +133,44 @@ __def('app', function (exports, require, React) {
   }
 
   /**
-   * Resize from the right edge (`e`), bottom edge (`s`) or both (`se`). The
-   * origin stays pinned and the far edges may only grow up to the work-area
-   * boundary from that origin, so a resize can never push the window outside.
+   * Resize from any edge or corner. The opposite edge stays pinned: west/north
+   * move the origin and reshape toward it, east/south grow the far edge, and
+   * corners combine both. Every edge is clamped to the minimum size and the
+   * work area, so a resize can never push the window outside.
    */
   function resizeWindowRect(rect, dx, dy, edge, viewport) {
     var vp = viewport || viewportSize();
     var bounds = windowSizeBounds(vp);
-    var maxWidth = Math.max(bounds.minWidth, vp.width - rect.x);
-    var maxHeight = Math.max(bounds.minHeight, vp.height - rect.y);
-    var width = rect.width;
-    var height = rect.height;
-    if (edge === 'e' || edge === 'se') width += dx;
-    if (edge === 's' || edge === 'se') height += dy;
-    return {
-      x: rect.x,
-      y: rect.y,
-      width: util.clamp(Math.round(width), bounds.minWidth, Math.min(bounds.maxWidth, maxWidth)),
-      height: util.clamp(Math.round(height), bounds.minHeight, Math.min(bounds.maxHeight, maxHeight)),
-    };
+    var name = String(edge || '');
+    var west = name.indexOf('w') !== -1;
+    var east = name.indexOf('e') !== -1;
+    var north = name.indexOf('n') !== -1;
+    var south = name.indexOf('s') !== -1;
+    var x = Math.round(rect.x);
+    var y = Math.round(rect.y);
+    var width = Math.round(rect.width);
+    var height = Math.round(rect.height);
+    var right = x + width;
+    var bottom = y + height;
+    if (west) {
+      var minX = Math.max(0, right - bounds.maxWidth);
+      var maxX = Math.max(minX, right - bounds.minWidth);
+      x = util.clamp(x + dx, minX, maxX);
+      width = right - x;
+    } else if (east) {
+      var maxWidth = Math.max(bounds.minWidth, Math.min(bounds.maxWidth, vp.width - x));
+      width = util.clamp(width + dx, bounds.minWidth, maxWidth);
+    }
+    if (north) {
+      var minY = Math.max(0, bottom - bounds.maxHeight);
+      var maxY = Math.max(minY, bottom - bounds.minHeight);
+      y = util.clamp(y + dy, minY, maxY);
+      height = bottom - y;
+    } else if (south) {
+      var maxHeight = Math.max(bounds.minHeight, Math.min(bounds.maxHeight, vp.height - y));
+      height = util.clamp(height + dy, bounds.minHeight, maxHeight);
+    }
+    return { x: x, y: y, width: width, height: height };
   }
 
   /* Default window footprint: 85% of the DSH window (the viewport the plugin
@@ -593,6 +593,10 @@ __def('app', function (exports, require, React) {
     var t = state.useT();
     var windowState = useSyncExternalStore(state.windowStore.subscribe, state.windowStore.get, state.windowStore.get);
     var sessionId = props && props.sessionId ? props.sessionId : null;
+    var hasWindow = state.hasWindowFor(sessionId);
+    /* Re-opening an existing window is always allowed; only a brand-new window
+     * can hit the cap. The button stays visible so the tooltip explains why. */
+    var limitReached = !hasWindow && windowState.windows.length >= state.MAX_REVIEW_WINDOWS;
     function open() {
       var target = { sessionId: sessionId, label: 'session' };
       var key = state.windowKeyForTarget(target);
@@ -602,7 +606,9 @@ __def('app', function (exports, require, React) {
     return h(components.ReviewButton, {
       t: t,
       onOpen: open,
-      active: state.hasWindowFor(sessionId),
+      active: hasWindow,
+      disabled: limitReached,
+      title: limitReached ? t('dock.limit', { n: state.MAX_REVIEW_WINDOWS }) : null,
       sessionId: sessionId,
     });
   }
@@ -1031,6 +1037,12 @@ __def('app', function (exports, require, React) {
 
     // ---- grouping -----------------------------------------------------------
     var repoRoot = snapshot && snapshot.repo ? snapshot.repo.root : null;
+    /* The name the window carries in its title bar and in the minimized control:
+     * the repository root when there is one, otherwise the workspace directory —
+     * a workspace that is not a Git repository still has a name, and the
+     * "Code Review" fallback would label every such window the same. */
+    var identityRoot = repoRoot
+      || (snapshot && !snapshot.repo && typeof snapshot.cwd === 'string' && snapshot.cwd ? snapshot.cwd : null);
     var entries = snapshot && Array.isArray(snapshot.entries) ? snapshot.entries : [];
     var summary = (snapshot && snapshot.summary) || emptySummary();
     /* The host caps the displayed entry list (summary.truncated). The client
@@ -2306,11 +2318,12 @@ __def('app', function (exports, require, React) {
     }, [openTargetButton, props.onHeadAction]);
 
     /* The window chrome (title bar) lives in the parent window component; report
-     * the resolved repository identity so windows of different workspaces can be
-     * told apart by project name, while the body keeps owning the snapshot. */
+     * the resolved identity so windows of different workspaces can be told apart
+     * by project name (the workspace directory before a repository exists),
+     * while the body keeps owning the snapshot. */
     useEffect(function () {
-      if (typeof props.onRepoChange === 'function') props.onRepoChange(repoRoot);
-    }, [repoRoot, props.onRepoChange]);
+      if (typeof props.onRootChange === 'function') props.onRootChange(identityRoot);
+    }, [identityRoot, props.onRootChange]);
 
     // ---- render -------------------------------------------------------------
     if (!open) return null;
@@ -2764,7 +2777,8 @@ __def('app', function (exports, require, React) {
   var ReviewWindow = React.memo(function ReviewWindow(props) {
     var t = props.t;
     var win = props.win;
-    var [repoRoot, setRepoRoot] = useState(null);
+    /* Repository root, or the workspace directory when it is not a Git repo. */
+    var [identityRoot, setIdentityRoot] = useState(null);
     /* The open-project control is produced by the review body (it needs the
      * snapshot) and mounted here in the title bar, before minimize/close. */
     var [headAction, setHeadAction] = useState(null);
@@ -2778,6 +2792,14 @@ __def('app', function (exports, require, React) {
     useEffect(function () {
       focusElement(rootRef.current);
     }, [win.openToken, win.focusToken]);
+
+    /* Restoring from the dock tab must hand DOM focus back to the window: the
+     * tab disappears with the click, and the root-scoped shortcuts would stay
+     * dead until the user clicked the window again. */
+    useEffect(function () {
+      if (win.minimized) return;
+      focusElement(rootRef.current);
+    }, [win.minimized]);
 
     useEffect(function () {
       return function () {
@@ -2794,6 +2816,13 @@ __def('app', function (exports, require, React) {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    /* Publish the resolved identity on the window record: a minimized window is
+     * not drawn at all, so its dock control names it from the store. */
+    useEffect(function () {
+      if (!identityRoot) return;
+      state.patchWindow(win.id, { root: identityRoot });
+    }, [identityRoot, win.id]);
+
     function saveGeometry() {
       saveWindowGeometry(win.id);
     }
@@ -2803,17 +2832,10 @@ __def('app', function (exports, require, React) {
       state.closeWindow(win.id);
     }
 
-    function toggleMinimize() {
-      if (win.minimized) {
-        /* Restoring grows the window back to its remembered footprint: re-clamp
-         * it against the live work area, otherwise a strip dragged to the
-         * bottom edge would come back half off screen. */
-        state.patchWindow(win.id, Object.assign(
-          { minimized: false },
-          clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewportSize()),
-        ));
-        return;
-      }
+    /* Minimizing only flips the flag: the window leaves the floating layer and
+     * the dock tab under the composer brings it back, re-clamped against the
+     * live work area so a window remembered near an old edge stays reachable. */
+    function minimizeWindow() {
       state.patchWindow(win.id, { minimized: true });
     }
 
@@ -2843,10 +2865,8 @@ __def('app', function (exports, require, React) {
       if (event.button !== undefined && event.button !== 0) return;
       if (event.defaultPrevented) return;
       /* A maximized window fills the work area: it is neither draggable nor
-       * resizable until it is restored. A minimized window is only its title
-       * strip, so it can be moved but offers no resize gesture either. */
+       * resizable until it is restored. */
       if (win.maximized) return;
-      if (win.minimized && edge !== 'move') return;
       if (edge === 'move' && isWindowControlTarget(event.target)) return;
       event.preventDefault();
       state.focusWindow(win.id);
@@ -2862,18 +2882,8 @@ __def('app', function (exports, require, React) {
         var dx = moveEvent.clientX - start.pointerX;
         var dy = moveEvent.clientY - start.pointerY;
         if (edge === 'move') {
-          /* The drag clamps against the live footprint: a minimized window is
-           * only its title strip, so it uses the strip height instead of the
-           * remembered restore height. Only the origin moves; the stored size
-           * stays the restore footprint. */
-          var dragged = win.minimized
-            ? clampMinimizedWindowRect({
-                x: start.rect.x + dx,
-                y: start.rect.y + dy,
-                width: start.rect.width,
-                height: start.rect.height,
-              }, start.viewport)
-            : dragWindowRect(start.rect, dx, dy, start.viewport);
+          /* Only the origin moves; the stored size stays the restore footprint. */
+          var dragged = dragWindowRect(start.rect, dx, dy, start.viewport);
           state.patchWindow(win.id, { x: dragged.x, y: dragged.y });
           return;
         }
@@ -2903,14 +2913,13 @@ __def('app', function (exports, require, React) {
       width: Number.isFinite(win.width) && win.width > 0 ? win.width : 960,
       height: Number.isFinite(win.height) && win.height > 0 ? win.height : 640,
     };
+    /* A minimized window keeps its record (and its restore footprint) but is not
+     * drawn: the dock tab under the composer owns it until it is restored. */
     var className = 'gr-window'
       + (props.focused ? ' gr-window-focused' : '')
       + (win.minimized ? ' gr-window-minimized' : '')
       + (win.maximized ? ' gr-window-maximized' : '')
       + (moving ? ' gr-window-moving' : '');
-    var minimizeIcon = win.minimized
-      ? h(components.IconArrowUp, { size: components.ICON_SIZE.md })
-      : h(components.IconMinus, { size: components.ICON_SIZE.md });
 
     return h('section', {
       className: className,
@@ -2922,7 +2931,7 @@ __def('app', function (exports, require, React) {
         left: geometry.x + 'px',
         top: geometry.y + 'px',
         width: geometry.width + 'px',
-        height: (win.minimized ? WINDOW_HEAD_HEIGHT : geometry.height) + 'px',
+        height: geometry.height + 'px',
         zIndex: props.zIndex,
       },
       'data-gr-review-window': win.id,
@@ -2941,15 +2950,15 @@ __def('app', function (exports, require, React) {
         },
       },
         h('div', { className: 'gr-window-ident' },
-          h(components.ReviewTitle, { t: t, repo: repoRoot ? { root: repoRoot } : null })),
+          h(components.ReviewTitle, { t: t, repo: identityRoot ? { root: identityRoot } : null })),
         h('div', { className: 'gr-window-actions' },
           headAction,
           h(components.IconButton, {
-            label: win.minimized ? t('window.restore') : t('window.minimize'),
+            label: t('window.minimize'),
             className: 'gr-window-btn gr-window-btn-min',
-            onClick: toggleMinimize,
+            onClick: minimizeWindow,
             t: t,
-          }, minimizeIcon),
+          }, h(components.IconMinus, { size: components.ICON_SIZE.md })),
           h(components.IconButton, {
             label: win.maximized ? t('window.restore') : t('window.maximize'),
             className: 'gr-window-btn gr-window-btn-max',
@@ -2970,7 +2979,7 @@ __def('app', function (exports, require, React) {
           target: win.target,
           openToken: win.openToken,
           windowRef: rootRef,
-          onRepoChange: setRepoRoot,
+          onRootChange: setIdentityRoot,
           onHeadAction: setHeadAction,
         })),
       h('div', {
@@ -2984,6 +2993,31 @@ __def('app', function (exports, require, React) {
         onPointerDown: function (event) { beginGesture(event, 's'); },
       }),
       h('div', {
+        className: 'gr-window-resize gr-window-resize-w',
+        'data-gr-no-window-drag': 'true',
+        onPointerDown: function (event) { beginGesture(event, 'w'); },
+      }),
+      h('div', {
+        className: 'gr-window-resize gr-window-resize-n',
+        'data-gr-no-window-drag': 'true',
+        onPointerDown: function (event) { beginGesture(event, 'n'); },
+      }),
+      h('div', {
+        className: 'gr-window-resize gr-window-resize-nw',
+        'data-gr-no-window-drag': 'true',
+        onPointerDown: function (event) { beginGesture(event, 'nw'); },
+      }),
+      h('div', {
+        className: 'gr-window-resize gr-window-resize-ne',
+        'data-gr-no-window-drag': 'true',
+        onPointerDown: function (event) { beginGesture(event, 'ne'); },
+      }),
+      h('div', {
+        className: 'gr-window-resize gr-window-resize-sw',
+        'data-gr-no-window-drag': 'true',
+        onPointerDown: function (event) { beginGesture(event, 'sw'); },
+      }),
+      h('div', {
         className: 'gr-window-resize gr-window-resize-se',
         'data-gr-no-window-drag': 'true',
         onPointerDown: function (event) { beginGesture(event, 'se'); },
@@ -2995,7 +3029,9 @@ __def('app', function (exports, require, React) {
     var layer = state.useStore(state.windowStore);
     var t = state.useT();
 
-    /* Keep every window inside the live viewport when the DSH page is resized. */
+    /* Keep every window inside the live viewport when the DSH page is resized.
+     * A minimized window keeps its stored footprint untouched: the dock tab
+     * re-clamps it when it is restored. */
     useEffect(function () {
       if (typeof window === 'undefined' || !window.addEventListener) return undefined;
       var onResize = function () {
@@ -3003,13 +3039,12 @@ __def('app', function (exports, require, React) {
         var windows = state.windowStore.get().windows;
         for (var index = 0; index < windows.length; index += 1) {
           var win = windows[index];
+          if (win.minimized) continue;
           if (win.maximized) {
             state.patchWindow(win.id, maximizedWindowGeometry(viewport));
             continue;
           }
-          var rect = win.minimized
-            ? clampMinimizedWindowRect(win, viewport)
-            : clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewport);
+          var rect = clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewport);
           if (rect.x !== win.x || rect.y !== win.y || rect.width !== win.width || rect.height !== win.height) {
             state.patchWindow(win.id, rect);
           }
@@ -3049,6 +3084,217 @@ __def('app', function (exports, require, React) {
   var PanelEntry = React.memo(WindowLayer);
 
   // ---------------------------------------------------------------------------
+  // Minimized window dock (`conversation.composer.dock` + `shell.overlay` slots)
+  //
+  // Minimized windows leave the floating layer and are summarized by one
+  // split control in the ambient row DSH renders under the composer card — the
+  // same row that carries its own activity / usage lines. The left half is the
+  // window the user is currently on (restores on click, like DSH's split
+  // open-target control); the right half carries `+N` for the remaining parked
+  // windows and opens their scrolling list. One entry instead of one tab per
+  // window keeps the row's width constant no matter how many reviews are open.
+  //
+  // The list renders in the frame-level `shell.overlay` seat rather than inside
+  // the composer: DSH documents the docked composer as containing its
+  // descendants, so a popover drawn there would be clipped.
+  // ---------------------------------------------------------------------------
+  /* Gap between the minimized list and the dock row it opens from (px). */
+  var DOCK_MENU_GAP = 8;
+  function minimizedWindowsOf(windows) {
+    return windows.filter(function (win) {
+      return win.minimized === true;
+    }).sort(function (left, right) {
+      /* Creation order, never the focus/stacking order: restoring one window
+       * must not reshuffle the list. */
+      return (left.seq || 0) - (right.seq || 0);
+    });
+  }
+
+  /**
+   * The window the split control shows on its left: the focused parked window,
+   * else the top of the stacking order (the store keeps the most recently
+   * focused window last), so the first press always restores what the user was
+   * just looking at.
+   */
+  function primaryMinimizedWindow(windows, focusedId) {
+    var minimized = minimizedWindowsOf(windows);
+    if (minimized.length === 0) return null;
+    for (var index = 0; index < minimized.length; index += 1) {
+      if (minimized[index].id === focusedId) return minimized[index];
+    }
+    for (var at = windows.length - 1; at >= 0; at -= 1) {
+      if (windows[at] && windows[at].minimized === true) return windows[at];
+    }
+    return minimized[minimized.length - 1];
+  }
+
+  /* Restoring re-clamps the remembered footprint against the live work area: the
+   * viewport may have shrunk, and a window parked near an old edge must not come
+   * back half off screen. Raising it keeps the "the window you just clicked is
+   * on top" rule the floating layer uses. */
+  function restoreMinimizedWindow(win) {
+    state.patchWindow(win.id, Object.assign(
+      { minimized: false },
+      clampWindowRect({ x: win.x, y: win.y, width: win.width, height: win.height }, viewportSize()),
+    ));
+    state.focusWindow(win.id);
+  }
+
+  function closeReviewWindow(id) {
+    saveWindowGeometry(id);
+    state.closeWindow(id);
+  }
+
+  function DockEntry() {
+    var t = state.useT();
+    var snapshot = useSyncExternalStore(state.windowStore.subscribe, state.windowStore.get, state.windowStore.get);
+    var menu = useSyncExternalStore(state.dockMenuStore.subscribe, state.dockMenuStore.get, state.dockMenuStore.get);
+    var minimized = minimizedWindowsOf(snapshot.windows);
+    var primary = primaryMinimizedWindow(snapshot.windows, snapshot.focusedId);
+    if (!primary) return null;
+    var others = minimized.filter(function (win) {
+      return win.id !== primary.id;
+    });
+
+    function openList(event) {
+      if (menu.open) {
+        state.closeDockMenu();
+        return;
+      }
+      /* Anchor the popover to the +N half: the list opens directly above it and
+       * stays inside the window even when the composer sits near the bottom. */
+      var node = event && event.currentTarget;
+      var rect = node && typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+      state.openDockMenu(rect
+        ? { right: rect.right, bottom: rect.bottom, left: rect.left, top: rect.top }
+        : null);
+    }
+
+    return h('div', { className: 'gr-dock', 'data-gr-dock': 'true' },
+      h('button', {
+        type: 'button',
+        className: 'gr-dock-primary',
+        'data-gr-dock-primary': 'true',
+        title: t('window.dockHint'),
+        onClick: function () {
+          restoreMinimizedWindow(primary);
+          state.closeDockMenu();
+        },
+      }, h(components.ReviewTitle, { t: t, repo: primary.root ? { root: primary.root } : null })),
+      others.length === 0 ? null : h('button', {
+        type: 'button',
+        className: 'gr-dock-more' + (menu.open ? ' gr-dock-more-open' : ''),
+        'data-gr-dock-trigger': 'true',
+        title: t('dock.list', { n: minimized.length }),
+        'aria-label': t('dock.list', { n: minimized.length }),
+        'aria-haspopup': 'dialog',
+        'aria-expanded': menu.open ? 'true' : 'false',
+        onClick: openList,
+      },
+        h('span', { className: 'gr-dock-count' }, '+' + others.length),
+        h(components.IconChevronDown, { size: components.ICON_SIZE.md })));
+  }
+
+  var DockMenuRow = React.memo(function DockMenuRow(props) {
+    var win = props.win;
+    var t = props.t;
+    return h('div', { className: 'gr-dock-row', 'data-gr-dock-row': win.id },
+      h('button', {
+        type: 'button',
+        className: 'gr-dock-restore',
+        title: t('window.dockHint'),
+        onClick: function () {
+          restoreMinimizedWindow(win);
+          state.closeDockMenu();
+        },
+      }, h(components.ReviewTitle, { t: t, repo: win.root ? { root: win.root } : null })),
+      h(components.IconButton, {
+        label: t('app.close'),
+        className: 'gr-dock-close',
+        onClick: function () {
+          closeReviewWindow(win.id);
+          state.closeDockMenu();
+        },
+        t: t,
+      }, h(components.IconClose, { size: components.ICON_SIZE.md })));
+  });
+
+  function DockMenuEntry() {
+    var t = state.useT();
+    var menu = useSyncExternalStore(state.dockMenuStore.subscribe, state.dockMenuStore.get, state.dockMenuStore.get);
+    var snapshot = useSyncExternalStore(state.windowStore.subscribe, state.windowStore.get, state.windowStore.get);
+    var minimized = minimizedWindowsOf(snapshot.windows);
+    var panelRef = useRef(null);
+
+    /* Escape closes the list and hands focus back to its trigger, which is the
+     * only keyboard entry point into it. */
+    function onKeyDown(event) {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      state.closeDockMenu();
+      if (typeof document !== 'undefined' && document.querySelector) {
+        var trigger = document.querySelector('[data-gr-dock-trigger]');
+        if (trigger) focusElement(trigger);
+      }
+    }
+
+    useEffect(function () {
+      if (!menu.open) return undefined;
+      if (panelRef.current) focusElement(panelRef.current);
+      /* A pointer anywhere outside the list and its trigger dismisses it. */
+      var onPointerDown = function (event) {
+        var target = event && event.target;
+        if (panelRef.current && target && panelRef.current.contains(target)) return;
+        if (target && typeof target.closest === 'function' && target.closest('[data-gr-dock-trigger]')) return;
+        state.closeDockMenu();
+      };
+      window.addEventListener('pointerdown', onPointerDown, true);
+      return function () {
+        window.removeEventListener('pointerdown', onPointerDown, true);
+      };
+    }, [menu.open]);
+
+    /* Nothing left to expand: with fewer than two parked windows the split
+     * control shows no +N half, so the list has no trigger to come back to. */
+    useEffect(function () {
+      if (menu.open && minimized.length < 2) state.closeDockMenu();
+    }, [menu.open, minimized.length]);
+
+    if (!menu.open || minimized.length < 2) return null;
+    var viewportWidth = typeof window !== 'undefined' && Number.isFinite(Number(window.innerWidth))
+      ? Number(window.innerWidth) : 1280;
+    var viewportHeight = typeof window !== 'undefined' && Number.isFinite(Number(window.innerHeight))
+      ? Number(window.innerHeight) : 800;
+    var anchor = menu.anchor;
+    var style = {
+      right: Math.max(DOCK_MENU_GAP, viewportWidth - (anchor && Number.isFinite(anchor.right) ? anchor.right : viewportWidth - WINDOW_MARGIN)) + 'px',
+      /* Clear the dock row instead of hanging off the button's own footprint:
+       * the +N half is only 20px tall, so anchoring to its top edge keeps a
+       * visible gap and the list never paints over the statistics underneath. */
+      bottom: (anchor && Number.isFinite(anchor.top)
+        ? Math.max(DOCK_MENU_GAP, viewportHeight - anchor.top + DOCK_MENU_GAP)
+        : WINDOW_MARGIN) + 'px',
+    };
+
+    return h('div', { className: 'gr-dock-menu-layer' },
+      h('div', {
+        className: 'gr-dock-menu',
+        role: 'dialog',
+        'aria-label': t('dock.list', { n: minimized.length }),
+        tabIndex: -1,
+        ref: panelRef,
+        style: style,
+        onKeyDown: onKeyDown,
+      },
+        /* No header: like DSH's own bottom-status popovers, the panel shows its
+         * content directly and dismisses on an outside click, Escape, or the
+         * action taken from a row. */
+        h('div', { className: 'gr-dock-menu-list' }, minimized.map(function (win) {
+          return h(DockMenuRow, { key: win.id, win: win, t: t });
+        }))));
+  }
+
+  // ---------------------------------------------------------------------------
   // Always-mounted style sheet entry (shell.overlay slot)
   //
   // The window layer only renders while at least one window is open, but the
@@ -3082,20 +3328,43 @@ __def('app', function (exports, require, React) {
     });
 
     ctx.slots.inject('shell.overlay', function () {
-      var disposeStyles = ctx.slots.register({
-        name: 'shell.overlay',
-        id: 'dsh-code-review-styles',
-        order: 0,
-      }, StylesEntry);
-      var disposePanel = ctx.slots.register({
-        name: 'shell.overlay',
-        id: 'dsh-code-review-panel',
-        order: 120,
-      }, PanelEntry);
+      var disposers = [
+        ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'dsh-code-review-styles',
+          order: 0,
+        }, StylesEntry),
+        ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'dsh-code-review-panel',
+          order: 120,
+        }, PanelEntry),
+        // The minimized list is a popover anchored to the composer dock entry.
+        // It lives in this frame-level layer because the docked composer clips
+        // its own descendants; 140 keeps it above the floating windows.
+        ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'dsh-code-review-dock-menu',
+          order: 140,
+        }, DockMenuEntry),
+      ];
       return function () {
-        if (typeof disposePanel === 'function') disposePanel();
-        if (typeof disposeStyles === 'function') disposeStyles();
+        for (var index = disposers.length - 1; index >= 0; index -= 1) {
+          if (typeof disposers[index] === 'function') disposers[index]();
+        }
       };
+    });
+
+    // One split control in the ambient row under the composer card
+    // (`conversation.composer.dock`, a list slot that already carries DSH's own
+    // activity / usage lines). `order: -10` puts it before those lines, at the
+    // left end of the row, instead of competing for a seat another plugin owns.
+    ctx.slots.inject('conversation.composer.dock', function () {
+      return ctx.slots.register({
+        name: 'conversation.composer.dock',
+        id: 'dsh-code-review-dock',
+        order: -10,
+      }, DockEntry);
     });
 
   }
@@ -3112,7 +3381,6 @@ __def('app', function (exports, require, React) {
   exports.commitModeOf = commitModeOf;
   exports.clampWindowSize = clampWindowSize;
   exports.clampWindowRect = clampWindowRect;
-  exports.clampMinimizedWindowRect = clampMinimizedWindowRect;
   exports.dragWindowRect = dragWindowRect;
   exports.resizeWindowRect = resizeWindowRect;
   exports.defaultWindowGeometry = defaultWindowGeometry;
@@ -3121,6 +3389,11 @@ __def('app', function (exports, require, React) {
   exports.rememberWindowGeometry = rememberWindowGeometry;
   exports.frameTopInset = frameTopInset;
   exports.viewportSize = viewportSize;
+  /* Slot entries re-exported so the source tests can render them directly. */
+  exports.DockEntry = DockEntry;
+  exports.DockMenuEntry = DockMenuEntry;
+  exports.DockMenuRow = DockMenuRow;
+  exports.minimizedWindowsOf = minimizedWindowsOf;
   exports.WINDOW_LIMITS = {
     margin: WINDOW_MARGIN,
     cascadeStep: WINDOW_CASCADE_STEP,

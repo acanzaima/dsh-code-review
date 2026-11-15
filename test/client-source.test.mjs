@@ -444,8 +444,9 @@ test('focusWindow / closeWindow / patchWindow keep the stacking order and focus 
 
 test('window geometry helpers are pure and exported for the source tests', () => {
   const app = createClientRuntime().require('app');
-  for (const name of ['clampWindowSize', 'clampWindowRect', 'clampMinimizedWindowRect', 'dragWindowRect', 'resizeWindowRect',
-    'defaultWindowGeometry', 'maximizedWindowGeometry', 'windowGeometryForOpen', 'rememberWindowGeometry']) {
+  for (const name of ['clampWindowSize', 'clampWindowRect',
+    'dragWindowRect', 'resizeWindowRect', 'defaultWindowGeometry', 'maximizedWindowGeometry', 'windowGeometryForOpen',
+    'rememberWindowGeometry']) {
     assert.equal(typeof app[name], 'function', `app.${name} must stay exported for tests`);
   }
   for (const key of ['margin', 'cascadeStep', 'headHeight', 'minWidth', 'minHeight']) {
@@ -555,32 +556,183 @@ test('drag keeps the window fully inside the work area', () => {
   assert.equal(south.y, rect.y);
 });
 
-test('a minimized window drags against its title strip, not its restore height', () => {
+test('every edge and corner resizes with the opposite edge pinned', () => {
   const app = createClientRuntime().require('app');
   const limits = app.WINDOW_LIMITS;
   const viewport = { width: 1280, height: 800 };
-  const rect = { x: 200, y: 150, width: 900, height: 700 };
+  const rect = { x: 200, y: 150, width: 900, height: 600 };
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
 
-  // A minimized window only occupies its title strip on screen, so it can be
-  // dragged all the way to the bottom edge of the work area...
-  const bottom = app.clampMinimizedWindowRect({ ...rect, y: 5000 }, viewport);
-  assert.equal(bottom.y, viewport.height - limits.headHeight,
-    'the strip may reach the bottom work-area edge');
-  // ...and up to the top edge, while the stored restore size survives.
-  assert.equal(app.clampMinimizedWindowRect({ ...rect, y: -5000 }, viewport).y, 0,
-    'the strip never slides under the DSH frame strip');
-  assert.equal(bottom.width, rect.width);
-  assert.equal(bottom.height, rect.height, 'the stored height is the restore size, not the strip height');
-  // Restoring that strip goes through the full-window clamp again, so the
-  // restored window is fully visible instead of growing off screen.
-  const restored = app.clampWindowRect({ ...rect, y: bottom.y }, viewport);
-  assert.equal(restored.y, viewport.height - limits.margin - rect.height);
-  assert.equal(restored.height, rect.height);
-  // The horizontal clamp keeps using the full width; an oversized stored width
-  // is clamped for the live area as well.
-  assert.equal(app.clampMinimizedWindowRect({ ...rect, x: 5000 }, viewport).x, viewport.width - rect.width);
-  assert.equal(app.clampMinimizedWindowRect({ x: 0, y: 0, width: 99999, height: 700 }, viewport).width,
-    viewport.width - limits.margin * 2);
+  // West and north move the origin and resize toward it.
+  assert.deepEqual(app.resizeWindowRect(rect, -100, 0, 'w', viewport),
+    { x: 100, y: 150, width: 1000, height: 600 });
+  assert.deepEqual(app.resizeWindowRect(rect, 100, 0, 'w', viewport),
+    { x: 300, y: 150, width: 800, height: 600 });
+  assert.deepEqual(app.resizeWindowRect(rect, 0, -100, 'n', viewport),
+    { x: 200, y: 50, width: 900, height: 700 });
+  assert.deepEqual(app.resizeWindowRect(rect, 0, 100, 'n', viewport),
+    { x: 200, y: 250, width: 900, height: 500 });
+  // Corners mix both axes; the opposite edges never move.
+  assert.deepEqual(app.resizeWindowRect(rect, -100, -100, 'nw', viewport),
+    { x: 100, y: 50, width: 1000, height: 700 });
+  assert.deepEqual(app.resizeWindowRect(rect, 100, -100, 'ne', viewport),
+    { x: 200, y: 50, width: 1000, height: 700 });
+  assert.deepEqual(app.resizeWindowRect(rect, -100, 100, 'sw', viewport),
+    { x: 100, y: 150, width: 1000, height: 650 });
+  assert.equal(app.resizeWindowRect(rect, -100, 0, 'w', viewport).x
+    + app.resizeWindowRect(rect, -100, 0, 'w', viewport).width, right);
+  assert.equal(app.resizeWindowRect(rect, 0, -100, 'n', viewport).y
+    + app.resizeWindowRect(rect, 0, -100, 'n', viewport).height, bottom);
+
+  // Minimum size stops inward drags at the documented bounds.
+  const westMin = app.resizeWindowRect(rect, 5000, 0, 'w', viewport);
+  assert.equal(westMin.width, limits.minWidth);
+  assert.equal(westMin.x, right - limits.minWidth);
+  const northMin = app.resizeWindowRect(rect, 0, 5000, 'n', viewport);
+  assert.equal(northMin.height, limits.minHeight);
+  assert.equal(northMin.y, bottom - limits.minHeight);
+  // Outward drags at the work-area edge stop at 0 and keep the far edge.
+  const westOff = app.resizeWindowRect(rect, -5000, 0, 'w', viewport);
+  assert.equal(westOff.x, 0);
+  assert.equal(westOff.width, right);
+  const northOff = app.resizeWindowRect(rect, 0, -5000, 'n', viewport);
+  assert.equal(northOff.y, 0);
+  assert.equal(northOff.height, bottom);
+  // A west drag cannot make the window wider than the work-area cap.
+  const wide = app.resizeWindowRect({ x: 500, y: 150, width: 760, height: 600 }, -5000, 0, 'w', viewport);
+  assert.equal(wide.width, viewport.width - limits.margin * 2);
+  assert.equal(wide.x, 500 + 760 - wide.width);
+});
+
+test('minimized windows become a split dock control with a scrolling list', () => {
+  const runtime = createClientRuntime();
+  const app = runtime.require('app');
+  const state = runtime.require('state');
+  const components = runtime.require('components');
+  // The dock reads its labels through the runtime translator, exactly like the
+  // other slot entries.
+  state.runtime.i18n = runtime.require('i18n').createI18n('zh');
+  const hasClass = (element, name) => String(element.props.className || '').split(/\s+/).includes(name);
+  const primaryOf = () => collectElements(app.DockEntry())
+    .find((element) => element.props['data-gr-dock-primary'] === 'true');
+  const moreOf = () => {
+    const entry = app.DockEntry();
+    if (!entry) return null;
+    return collectElements(entry).find((element) => element.props['data-gr-dock-trigger'] === 'true') || null;
+  };
+  const titleOf = (node) => collectElements(node).find((element) => element.type === components.ReviewTitle);
+  const rows = () => collectElements(app.DockMenuEntry())
+    .filter((element) => element.type === app.DockMenuRow)
+    .map((element) => element.type(element.props));
+
+  // Nothing to summarize: no window at all, and an open (not minimized) window.
+  assert.equal(app.DockEntry(), null, 'an empty store renders no dock entry');
+  assert.equal(app.DockMenuEntry(), null, 'the list stays closed by default');
+  const first = state.openPanel({ sessionId: 'session-A' }, { x: 40, y: 60, width: 900, height: 620 });
+  assert.equal(app.DockEntry(), null, 'an open window is not parked in the dock');
+
+  // One parked window: only the primary half, named after its repository. There
+  // is nothing to expand, so the +N half does not exist.
+  state.patchWindow(first, { minimized: true, root: '/work/alpha' });
+  assert.ok(primaryOf(), 'the left half is the window the user is on');
+  assert.deepEqual(titleOf(primaryOf()).props.repo, { root: '/work/alpha' });
+  assert.equal(moreOf(), null, 'a single parked window needs no +N half');
+
+  // Clicking the primary half restores it, raising it like the floating layer.
+  primaryOf().props.onClick();
+  const restoredFirst = state.windowStore.get().windows[0];
+  assert.equal(restoredFirst.minimized, false, 'the primary half restores its window');
+  assert.equal(state.windowStore.get().focusedId, first);
+  assert.deepEqual(
+    { x: restoredFirst.x, y: restoredFirst.y, width: restoredFirst.width, height: restoredFirst.height },
+    { x: 40, y: 60, width: 900, height: 620 },
+    'restoring keeps the pre-minimize footprint',
+  );
+  assert.equal(app.DockEntry(), null, 'the entry disappears once nothing is minimized');
+
+  // Two parked windows: the split control appears, and +N counts the *other*
+  // parked windows.
+  state.patchWindow(first, { minimized: true, root: '/work/alpha' });
+  const second = state.openPanel({ sessionId: 'session-B' }, { x: 60, y: 80, width: 900, height: 620 });
+  state.patchWindow(second, { minimized: true, root: '/work/beta' });
+  state.focusWindow(second);
+  assert.deepEqual(titleOf(primaryOf()).props.repo, { root: '/work/beta' },
+    'the primary half follows the focused parked window');
+  assert.equal(collectText(moreOf()), '+1', 'the +N half counts the remaining parked windows');
+  assert.equal(moreOf().props['aria-expanded'], 'false');
+
+  // Clicking +N opens the scrolling list anchored to that half.
+  moreOf().props.onClick({ currentTarget: null });
+  assert.equal(state.dockMenuStore.get().open, true);
+  assert.equal(collectText(moreOf()), '+1', 'an open list keeps the +N half as its trigger');
+
+  // The list renders in the frame-level overlay layer, not inside the composer.
+  const layer = app.DockMenuEntry();
+  assert.equal(layer.props.className, 'gr-dock-menu-layer');
+  assert.ok(collectElements(layer).find((element) => element.props.role === 'dialog'), 'the list is a dialog surface');
+
+  // The list holds every parked window, in creation order (first, second).
+  const rendered = rows();
+  assert.deepEqual(rendered.map((row) => row.props['data-gr-dock-row']), [first, second],
+    'the list keeps the stable creation order');
+  assert.equal(collectElements(rendered[0]).some((element) => hasClass(element, 'gr-dock-close')),
+    true, 'a row carries a close control');
+
+  // Restoring a row re-clamps the window and closes the list.
+  const restore = collectElements(rendered[1]).find((element) => element.props.className === 'gr-dock-restore');
+  restore.props.onClick();
+  assert.equal(state.windowStore.get().windows.find((win) => win.id === second).minimized, false);
+  assert.equal(state.dockMenuStore.get().open, false, 'the list closes after restoring');
+
+  // Closing a row discards the window without restoring it.
+  state.patchWindow(second, { minimized: true });
+  state.focusWindow(second);
+  moreOf().props.onClick({ currentTarget: null });
+  const closeRow = collectElements(rows()[1]).find((element) => hasClass(element, 'gr-dock-close'));
+  closeRow.props.onClick();
+  assert.equal(state.windowStore.get().windows.some((win) => win.id === second), false);
+  assert.equal(state.dockMenuStore.get().open, false);
+
+  // The surviving parked window becomes the primary half...
+  assert.deepEqual(titleOf(primaryOf()).props.repo, { root: '/work/alpha' });
+  // ...and an unresolved repository still names it (falls back to the title).
+  const third = state.openPanel({ sessionId: 'session-C' }, { x: 10, y: 10, width: 900, height: 600 });
+  state.patchWindow(third, { minimized: true });
+  state.focusWindow(third);
+  assert.equal(titleOf(primaryOf()).props.repo, null, 'an unresolved repository falls back to the panel title');
+
+  // Minimized windows are never drawn: the floating layer keeps only their
+  // record, and a long list scrolls inside the popover.
+  assert.equal(state.windowStore.get().windows.filter((win) => win.minimized).length, 2);
+  assert.match(stylesSource, /\.gr-window-minimized \{ display: none; \}/,
+    'a minimized window is hidden instead of drawn as a strip');
+  assert.match(stylesSource, /\.gr-dock-menu-list \{[^}]*overflow-y: auto/,
+    'a long list scrolls inside the popover');
+});
+
+test('the window manager caps simultaneous review windows', () => {
+  const runtime = createClientRuntime();
+  const state = runtime.require('state');
+  const geometry = { x: 16, y: 16, width: 900, height: 600 };
+  const ids = [];
+  for (let index = 0; index < state.MAX_REVIEW_WINDOWS; index += 1) {
+    const id = state.openPanel({ sessionId: 'session-' + index }, geometry);
+    assert.equal(typeof id, 'string', `window ${index + 1} must open`);
+    ids.push(id);
+  }
+  assert.equal(state.canOpenPanel(), false, 'the cap is reported to the composer button');
+  assert.equal(state.openPanel({ sessionId: 'session-overflow' }, geometry), null,
+    'a new target is refused at the cap');
+  assert.equal(state.windowStore.get().windows.length, state.MAX_REVIEW_WINDOWS);
+  // An existing target still focuses/restores instead of being refused.
+  state.patchWindow(ids[0], { minimized: true });
+  assert.equal(state.openPanel({ sessionId: 'session-0' }, geometry), ids[0]);
+  assert.equal(state.windowStore.get().windows.find((win) => win.id === ids[0]).minimized, false);
+  // Closing one frees a seat.
+  state.closeWindow(ids[1]);
+  assert.equal(state.canOpenPanel(), true);
+  assert.equal(typeof state.openPanel({ sessionId: 'session-overflow' }, geometry), 'string');
 });
 
 test('the work area starts below the DSH frame title strip', () => {
@@ -1956,7 +2108,15 @@ test('the review window title bar shows the repository identity', () => {
   // The floating window chrome owns the title: identity inside the title bar.
   assert.match(appSource, /className: 'gr-window-head'/);
   assert.match(appSource, /className: 'gr-window-ident'/);
-  assert.match(appSource, /h\(components\.ReviewTitle, \{ t: t, repo: repoRoot \? \{ root: repoRoot \} : null \}\)/);
+  assert.match(appSource, /h\(components\.ReviewTitle, \{ t: t, repo: identityRoot \? \{ root: identityRoot \} : null \}\)/);
+  // A workspace that is not a Git repository yet still names its window: the
+  // body falls back to the workspace directory instead of "Code Review".
+  assert.match(appSource,
+    /var identityRoot = repoRoot\s*\|\| \(snapshot && !snapshot\.repo && typeof snapshot\.cwd === 'string' && snapshot\.cwd \? snapshot\.cwd : null\);/);
+  assert.match(appSource, /if \(typeof props\.onRootChange === 'function'\) props\.onRootChange\(identityRoot\);/);
+  assert.match(appSource, /state\.patchWindow\(win\.id, \{ root: identityRoot \}\);/,
+    'the minimized control names the window from the published identity root');
+  assert.match(appSource, /repo: primary\.root \? \{ root: primary\.root \} : null/);
   // The old modal title/subtitle pair is gone.
   assert.equal(componentsSource.includes('subtitle: modalHeader'), false);
   assert.equal(/title: h\(components\.ReviewTitle/.test(appSource), false, 'the review window is not a Modal title');
@@ -1976,9 +2136,9 @@ test('window chrome exposes drag, minimize, maximize, close and resize handles',
   // Drag: the title bar starts a move gesture; double-click toggles maximize.
   assert.match(appSource, /beginGesture\(event, 'move'\)/);
   assert.match(appSource, /onDoubleClick: function \(event\) \{[\s\S]{0,160}?toggleMaximize\(\)/);
-  // Minimize/restore button, maximize/restore button, and the close button as
-  // the only close path.
-  assert.match(appSource, /label: win\.minimized \? t\('window\.restore'\) : t\('window\.minimize'\)/);
+  // Minimize button, maximize/restore button, and the close button as the only
+  // close path.
+  assert.match(appSource, /label: t\('window\.minimize'\)/);
   assert.match(appSource, /className: 'gr-window-btn gr-window-btn-min'/);
   assert.match(appSource, /label: win\.maximized \? t\('window\.restore'\) : t\('window\.maximize'\)/);
   assert.match(appSource, /className: 'gr-window-btn gr-window-btn-max'/);
@@ -1987,32 +2147,98 @@ test('window chrome exposes drag, minimize, maximize, close and resize handles',
   assert.match(appSource, /onClick: toggleMaximize/);
   // A maximized window is neither draggable nor resizable until restored, and
   // its resize edges are hidden.
-  assert.match(appSource, /if \(win\.maximized\) return;/, 'maximized windows are not draggable or resizable');
+  assert.match(appSource, /if \(win\.maximized\) return;/,
+    'maximized windows are not draggable or resizable');
   assert.match(stylesSource, /\.gr-window-maximized \.gr-window-resize \{ display: none; \}/);
-  // A minimized window is only its title strip: its drag clamps against the
-  // strip height instead of the remembered restore height, patches the origin
-  // only, and offers no resize gesture or resize edges while minimized.
-  assert.match(appSource, /if \(win\.minimized && edge !== 'move'\) return;/,
-    'a minimized strip can be moved but not resized');
-  assert.match(appSource, /var dragged = win\.minimized/);
-  assert.match(appSource, /clampMinimizedWindowRect\(\{[\s\S]{0,260}?\}, start\.viewport\)/,
-    'the minimized drag clamps against the title-strip footprint');
-  assert.match(appSource, /state\.patchWindow\(win\.id, \{ x: dragged\.x, y: dragged\.y \}\)/,
-    'the minimized drag moves the origin and keeps the stored restore size');
-  assert.match(appSource, /clampMinimizedWindowRect\(win, viewport\)/,
-    'a resize event clamps a minimized window against its strip footprint');
-  assert.match(appSource,
-    /minimized: false[\s\S]{0,80}?clampWindowRect\(\{ x: win\.x, y: win\.y, width: win\.width, height: win\.height \}, viewportSize\(\)\)/,
-    'restoring a minimized strip re-clamps the full window');
-  assert.match(stylesSource, /\.gr-window-minimized \.gr-window-resize-e/,
-    'the right-edge resize handle is hidden while minimized');
+  // A minimized window keeps its record and its restore footprint but leaves
+  // the floating layer: the composer dock owns it until it is restored.
+  assert.match(appSource, /function minimizeWindow\(\) \{\s*state\.patchWindow\(win\.id, \{ minimized: true \}\);/,
+    'minimizing only flips the flag');
+  assert.match(stylesSource, /\.gr-window-minimized \{ display: none; \}/,
+    'a minimized window is not painted in the floating layer');
+  assert.match(appSource, /className: 'gr-dock'/);
+  // The dock is DSH's split-control shape: primary half restores the window the
+  // user is on, the +N half opens the list.
+  assert.match(appSource, /'data-gr-dock-primary': 'true'/);
+  assert.match(appSource, /className: 'gr-dock-primary'/);
+  assert.match(appSource, /'data-gr-dock-trigger': 'true'/, 'the +N half is the list trigger');
+  assert.match(appSource, /h\('span', \{ className: 'gr-dock-count' \}, '\+' \+ others\.length\)/,
+    'the +N half counts the remaining parked windows');
+  assert.match(appSource, /others\.length === 0 \? null : h\('button'/,
+    'a single parked window shows no +N half');
+  assert.match(appSource, /function primaryMinimizedWindow\(windows, focusedId\) \{/,
+    'the primary half follows the focused parked window');
+  assert.match(appSource, /return \(left\.seq \|\| 0\) - \(right\.seq \|\| 0\);/,
+    'the list follows creation order, not the stacking order');
+  assert.match(appSource, /function restoreMinimizedWindow\(win\) \{[\s\S]{0,200}?clampWindowRect\(/,
+    'restoring re-clamps the full window against the live work area');
+  assert.match(appSource, /function restoreMinimizedWindow\(win\) \{[\s\S]{0,320}?state\.focusWindow\(win\.id\);/,
+    'restoring raises the window it restores');
+  assert.match(appSource, /if \(win\.minimized\) return;\s*focusElement\(rootRef\.current\);/,
+    'restoring returns DOM focus so the window shortcuts work immediately');
+  assert.match(appSource, /state\.openDockMenu\(/, 'the trigger opens the minimized list');
+  assert.match(appSource, /state\.closeDockMenu\(/, 'the list can be dismissed');
+  assert.match(appSource, /role: 'dialog'/, 'the list is a dialog surface');
+  assert.match(appSource, /className: 'gr-dock-menu-list'/);
+  // Like DSH's own status popovers, the panel is the list itself: no title bar
+  // and no dedicated close button (outside click / Escape dismiss it).
+  assert.equal(appSource.includes('gr-dock-menu-head'), false, 'the list has no header row');
+  assert.equal(appSource.includes('gr-dock-menu-close'), false, 'the list has no dedicated close button');
+  assert.equal(stylesSource.includes('.gr-dock-menu-head'), false, 'no header styles remain');
+  assert.match(appSource, /ctx\.slots\.inject\('conversation\.composer\.dock', function \(\) \{/);
+  assert.match(appSource, /id: 'dsh-code-review-dock',\s*order: -10,/,
+    'the dock sits before the activity / usage lines, at the left end of the row');
+  assert.match(appSource, /id: 'dsh-code-review-dock-menu'/,
+    'the list lives in the frame-level overlay, not inside the clipping composer');
+  // Hover follows DSH's own row entries: a plain fill, never an appearing border.
+  assert.match(stylesSource, /\.gr-dock-primary:hover, \.gr-dock-more:hover, \.gr-dock-more-open \{ background: var\(--dsw-alias-interactive-bg-hover\); \}/);
+  assert.equal(/\.gr-dock-primary:hover[^{}]*border/.test(stylesSource), false,
+    'the dock must not grow a border on hover');
+  assert.match(stylesSource, /\.gr-dock-more \{[^}]*border-left: \.5px solid var\(--dsw-alias-border-l2\)/,
+    'the split divider mirrors DSH\'s open-target chevron cell');
+  // A long repository name must not stretch the statistics row: the name
+  // ellipsizes at a width that still fits a three-word project name, and the
+  // control itself stays bounded.
+  assert.match(stylesSource, /\.gr-dock-primary \{[^}]*max-width: 260px/,
+    'the split control stays bounded in the statistics row');
+  assert.match(stylesSource, /\.gr-dock-primary \.gr-review-title-name \{ max-width: 220px; \}/,
+    'the repository name ellipsizes at a generous width');
+  // The glyph must not outweigh the row: same 14px as the composer entry's
+  // glyph, and it inherits the row's secondary tone instead of the title ink.
+  assert.match(stylesSource, /\.gr-dock-primary \.gr-ico \{ width: 14px; height: 14px; \}/,
+    'the dock glyph matches the composer entry size');
+  assert.match(stylesSource, /\.gr-dock-primary \.gr-repo-icon \{[^}]*color: inherit/,
+    'the dock glyph follows the row\'s secondary colour');
+  assert.match(stylesSource, /\.gr-review-title-name \{[^}]*text-overflow: ellipsis/,
+    'the truncated name is an ellipsis, with the full path in its tooltip');
+  assert.match(stylesSource, /\.gr-dock-menu-list \{[^}]*overflow-y: auto/,
+    'a long list scrolls inside the popover');
+  assert.match(stylesSource, /\.gr-dock-menu \{[^}]*max-height: min\(60vh, 420px\)/,
+    'the popover is bounded by the viewport');
+  // The list opens above the dock row (from the trigger's top edge), not from
+  // the button's own footprint, so it never paints over the statistics row.
+  assert.match(appSource, /var DOCK_MENU_GAP = 8;/);
+  assert.match(appSource, /bottom: \(anchor && Number\.isFinite\(anchor\.top\)/,
+    'the list is anchored above the dock row');
+  assert.equal(/viewportHeight - anchor\.bottom/.test(appSource), false,
+    'the list must not hang off the button bottom and overlap the row');
+  // The hard cap on simultaneous windows and the disabled composer button that
+  // explains it.
+  assert.match(appSource, /limitReached = !hasWindow && windowState\.windows\.length >= state\.MAX_REVIEW_WINDOWS/);
+  assert.match(appSource, /title: limitReached \? t\('dock\.limit', \{ n: state\.MAX_REVIEW_WINDOWS \}\) : null/);
+  assert.match(stateSource, /var MAX_REVIEW_WINDOWS = 24;/);
+  assert.match(stateSource, /if \(current\.windows\.length >= MAX_REVIEW_WINDOWS\) return null;/);
   assert.match(appSource, /className: 'gr-window-btn gr-window-btn-close'/);
   assert.match(appSource, /onClick: closeWindow/);
-  // Resize handles: east, south and south-east edges.
-  for (const edge of ['e', 's', 'se']) {
+  // Resize handles: all four edges and all four corners.
+  for (const edge of ['e', 's', 'w', 'n', 'ne', 'nw', 'se', 'sw']) {
     assert.ok(appSource.includes(`className: 'gr-window-resize gr-window-resize-${edge}'`), `missing ${edge} resize handle`);
     assert.ok(appSource.includes(`beginGesture(event, '${edge}')`), `missing ${edge} resize gesture`);
   }
+  assert.match(stylesSource, /\.gr-window-resize-w \{[^}]*cursor: ew-resize/, 'the left edge resizes horizontally');
+  assert.match(stylesSource, /\.gr-window-resize-n \{[^}]*cursor: ns-resize/, 'the top edge resizes vertically');
+  assert.match(stylesSource, /\.gr-window-resize-nw \{[^}]*cursor: nwse-resize/, 'the top-left corner resizes both axes');
+  assert.match(stylesSource, /\.gr-window-resize-ne \{[^}]*cursor: nesw-resize/, 'the top-right corner resizes both axes');
   // Maximize/restore remember the previous rectangle, and the geometry is
   // clamped against the live viewport.
   assert.match(appSource, /maximizedWindowGeometry\(viewportSize\(\)\)/);
@@ -2087,8 +2313,9 @@ test('keyboard shortcuts are scoped to the focused window and Esc never closes i
   for (const layer of ['closeMenu()', 'setConfirm(null)', 'closePush()', 'setPanelSettingsOpen(false)', 'setShortcutHelp(false)']) {
     assert.ok(appSource.includes(layer), `Esc layer handling is missing ${layer}`);
   }
-  assert.equal(appSource.split('state.closeWindow').length - 1, 1,
-    'only the explicit window close button may close a window');
+  // The window title bar and the minimized list are the only explicit close paths.
+  assert.equal(appSource.split('state.closeWindow').length - 1, 2,
+    'only the explicit window / list close controls may close a window');
   assert.equal(/Escape[\s\S]{0,240}?state\.closeWindow/.test(appSource), false,
     'Esc must never close the review window');
 });
@@ -2120,7 +2347,8 @@ test('in-window dialogs cover only their review window with the scoped backdrop'
 test('window chrome strings exist in both zh and en dictionaries', () => {
   const runtime = createClientRuntime();
   const i18n = runtime.require('i18n');
-  const keys = ['window.minimize', 'window.restore', 'window.maximize', 'window.hint', 'app.close'];
+  const keys = ['window.minimize', 'window.restore', 'window.maximize', 'window.hint',
+    'window.dockHint', 'dock.list', 'dock.limit', 'app.close'];
   for (const locale of ['zh', 'en']) {
     const t = i18n.createI18n(locale).t;
     for (const key of keys) {
@@ -2130,6 +2358,9 @@ test('window chrome strings exist in both zh and en dictionaries', () => {
       assert.ok(value.length > 0, `${locale}: ${key} must not be empty`);
     }
     assert.notEqual(t('window.minimize'), t('window.maximize'), `${locale}: minimize/maximize labels must differ`);
+    // The interpolated strings keep their placeholder so the count renders.
+    assert.ok(t('dock.list', { n: 3 }).includes('3'), `${locale}: dock.list must interpolate the count`);
+    assert.ok(t('dock.limit', { n: 24 }).includes('24'), `${locale}: dock.limit must interpolate the cap`);
   }
 });
 

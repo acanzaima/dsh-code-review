@@ -15,7 +15,7 @@ body:
     attributes:
       label: DSH version
       description: The DSH version shown in the app (Settings → About) or the package version you run.
-      placeholder: "0.2.1-rc.5"
+      placeholder: "0.2.2-rc.3"
     validations:
       required: true
 

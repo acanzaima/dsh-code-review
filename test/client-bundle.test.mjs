@@ -1,7 +1,7 @@
 /**
  * Bundled-client smoke test: the generated `client.js` must register one
  * DSH module whose factory yields the plugin (`apply` + `inject`), and applying
- * it must contribute exactly the three slot entries this plugin owns.
+ * it must contribute exactly the five slot entries this plugin owns.
  *
  * React is replaced with a minimal stub; the point is module wiring, not
  * rendering (rendering is exercised in the GUI).
@@ -33,7 +33,7 @@ function reactStub() {
   };
 }
 
-test('client bundle registers the plugin and its three slot entries', async () => {
+test('client bundle registers the plugin and its five slot entries', async () => {
   assert.equal(existsSync(CLIENT_BUNDLE), true, 'client.js is missing — run `npm run build`');
   const source = await readFile(CLIENT_BUNDLE, 'utf8');
   assert.match(source, /window\.__ModuleLoader__\.load\(/, 'not a DSH client bundle');
@@ -81,7 +81,8 @@ test('client bundle registers the plugin and its three slot entries', async () =
   plugin.apply(fakeContext);
 
   const names = registered.map((options) => options.name).sort();
-  assert.deepEqual(names, ['conversation.input.left', 'shell.overlay', 'shell.overlay']);
+  assert.deepEqual(names,
+    ['conversation.composer.dock', 'conversation.input.left', 'shell.overlay', 'shell.overlay', 'shell.overlay']);
   const ids = registered.map((options) => options.id);
   assert.equal(new Set(ids).size, ids.length, `duplicate slot ids: ${ids.join(', ')}`);
   for (const options of registered) {
@@ -104,6 +105,7 @@ test('client bundle registers the plugin and its three slot entries', async () =
   assert.match(source, /gr-window-layer/, 'client.js must carry the floating window layer');
   assert.match(source, /gr-window-ident/, 'client.js must carry the window title bar');
   assert.match(source, /gr-window-btn-close/, 'client.js must carry the window close button');
+  assert.match(source, /gr-dock/, 'client.js must carry the composer dock row');
   assert.match(source, /gr-modal-backdrop-scoped/, 'in-window dialogs must use the scoped backdrop');
   assert.equal(source.includes('gr-modal-review'), false, 'the old full-page review modal is gone');
   assert.equal(source.includes('panelStore'), false, 'the old single-panel store is gone');

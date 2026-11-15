@@ -121,6 +121,26 @@ __def('state', function (exports, require, React) {
   var windowStore = createStore({ windows: [], focusedId: null });
   var windowSeq = 0;
 
+  /**
+   * Hard ceiling on simultaneously open review windows. Every window keeps a
+   * mounted body (polling, snapshot, diff) while it is minimized, so the cap is
+   * a real resource limit rather than a layout preference; the minimized list is
+   * also a scrolling popover, which stays usable well below this number.
+   */
+  var MAX_REVIEW_WINDOWS = 24;
+
+  /** One transient popover: the list of minimized windows under the composer. */
+  var dockMenuStore = createStore({ open: false, anchor: null });
+
+  function openDockMenu(anchor) {
+    dockMenuStore.set({ open: true, anchor: anchor || null });
+  }
+
+  function closeDockMenu() {
+    if (!dockMenuStore.get().open) return;
+    dockMenuStore.set({ open: false, anchor: null });
+  }
+
   function findWindow(windows, id) {
     for (var index = 0; index < windows.length; index += 1) {
       if (windows[index].id === id) return windows[index];
@@ -132,7 +152,7 @@ __def('state', function (exports, require, React) {
    * Open (or re-focus) the review window for a target. A target that already
    * owns a window is focused and restored from the minimized state instead of
    * being duplicated; two different targets yield two independent windows.
-   * Returns the window id.
+   * Returns the window id, or null when `MAX_REVIEW_WINDOWS` is reached.
    */
   function openPanel(target, geometry) {
     var normalized = normalizeTarget(target);
@@ -159,6 +179,7 @@ __def('state', function (exports, require, React) {
       });
       return existing.id;
     }
+    if (current.windows.length >= MAX_REVIEW_WINDOWS) return null;
     windowSeq += 1;
     var created = {
       id: 'review-window-' + windowSeq,
@@ -168,6 +189,11 @@ __def('state', function (exports, require, React) {
       seq: windowSeq,
       key: key,
       target: normalized,
+      /* Window identity root, published by the window body once the snapshot is
+       * readable: the repository root, or the workspace directory for a
+       * workspace that is not a Git repository yet. The title bar and the
+       * minimized control name the window from it. */
+      root: null,
       openToken: windowSeq,
       focusToken: 0,
       minimized: false,
@@ -267,9 +293,19 @@ __def('state', function (exports, require, React) {
     React.useSyncExternalStore(runtime.i18n.subscribe, runtime.i18n.getLocale, runtime.i18n.getLocale);
   }
 
+  /** True while another window may be opened (the cap is a hard limit). */
+  function canOpenPanel() {
+    return windowStore.get().windows.length < MAX_REVIEW_WINDOWS;
+  }
+
   exports.runtime = runtime;
   exports.windowStore = windowStore;
   exports.settingsStore = settingsStore;
+  exports.dockMenuStore = dockMenuStore;
+  exports.openDockMenu = openDockMenu;
+  exports.closeDockMenu = closeDockMenu;
+  exports.MAX_REVIEW_WINDOWS = MAX_REVIEW_WINDOWS;
+  exports.canOpenPanel = canOpenPanel;
   exports.createStore = createStore;
   exports.openPanel = openPanel;
   exports.closeWindow = closeWindow;

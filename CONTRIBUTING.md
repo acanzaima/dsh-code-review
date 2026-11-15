@@ -70,7 +70,7 @@ npm run check       # 发布门禁 + 完整测试（= npm run validate -- --with
 - **零运行时依赖**：`dependencies` 与 `devDependencies` 必须保持为空；Host 只使用 Node 内置模块，Client 只使用宿主注入的 `react`。
 - **不要手改 `client.js`**：它是 `scripts/build.mjs` 的确定性输出，改源码后重新构建。
 - **客户端源码是普通脚本**：没有 ESM `import`/`export`、没有 JSX、没有顶层 `await`；同级模块只能通过 `require('模块名')` 引用。
-- **构建顺序固定**：`util → i18n → state → rpc → diff → diff-view → styles → components → app`，由 `scripts/build.mjs` 的 `ORDER` 决定，不要改动拼接逻辑。
+- **构建顺序固定**：`util → i18n → state → rpc → open-in-app → diff → diff-view → styles → ui → components → app`，由 `scripts/build.mjs` 的 `ORDER` 决定，不要改动拼接逻辑。
 - **样式只用主题令牌**：客户端样式只能使用 `--dsw-alias-*` 等 DSH 主题自定义属性及由其派生的透明叠加，不得出现字面颜色值；插件样式全部限定在 `.gr-` 命名空间。
 - **文案走 i18n**：所有可见文案必须同时存在于 zh 与 en 字典，且 key 完全一致；不要在组件里硬编码中英文。
 - **协议变更要成套**：新增或修改 Host 方法时，同步更新 Host 方法表、[docs/protocol.md](docs/protocol.md)、Client 的 RPC 层与测试。

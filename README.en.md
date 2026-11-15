@@ -61,16 +61,16 @@ Upgrades, disabling and uninstalling also happen on the Plugins page; to upgrade
 
 The file navigation groups by whether a path already exists in the repository (tracked / new / conflicts); staging or unstaging changes the commit state but never moves a file between groups.
 
-If the workspace is not a Git repository yet, the window offers **Initialise and refresh**; it creates only `.git/` and never generates or modifies project files.
+If the workspace is not a Git repository yet, the window offers **Initialise and refresh**; it creates only `.git/` and never generates or modifies project files. In that state the window title and the minimized control show the workspace directory name instead of a generic “Code Review”, so several workspace windows stay distinguishable.
 
 Right-click a file or a change block in the diff to stage, unstage or discard it. **Discard removes unstaged changes, requires confirmation and cannot be undone.**
 
-Press `?` inside the window for keyboard shortcuts. `Esc` closes menus and dialogs; use the title-bar close button to close the review window.
+Press `?` inside the window for keyboard shortcuts. `Esc` closes menus and dialogs; use the title-bar close button to close the review window, or the × on a row of the minimized list.
 
 ### Multiple workspaces and minimizing
 
 - **Independent reviews**: open Code Review from different workspaces or sessions to keep several review windows open at once. Each window stays with the repository it opened for, with its own file selection and diff view. Switching workspaces or sessions leaves existing windows open and keeps their repositories unchanged.
-- **Minimize and restore**: click “Minimize” in the title bar to collapse a window to a title strip showing its repository name, keeping several projects accessible while you continue chatting. Click the upward arrow on the right of the strip to restore the window.
+- **Minimize and restore**: click “Minimize” in the title bar to park a window behind the split control at the left end of the statistics row under the composer. Its left half names the window you are on and restores it in one click; its right half is “+N” (N = the other parked windows) and opens the list of parked windows — click a row to restore it at the position and size it had before minimizing, or use the × on the right to close it; a long list scrolls inside the popover. With a single parked window the right half is not shown. At most 24 review panels can be open at once — at the cap the composer entry greys out and its tooltip explains why.
 
 Each window has its own review UI state; plugin settings and the Git state of the same repository remain shared. Windows exist only on the current page: refreshing DSH closes all review windows.
 
@@ -102,6 +102,7 @@ It only runs when the user triggers it, sending the **staged diff** plus recent 
 - Commits include only staged changes, and pushes never force-overwrite the remote. Push previews do not fetch remote updates; run `git fetch` yourself when needed. Commit-and-push (including the AI mode) also never forces or fetches; if the push fails, the commit is kept.
 - Oversized change lists are truncated, disabling select-all and commit. Reduce the change set or use the command line.
 - An AI-drafted commit message is a draft covering staged changes only; review it before committing and write it yourself for sensitive changes.
+- At most 24 review windows can be open at once; at the cap the composer entry greys out until you close one.
 
 ## Documentation and Feedback
 

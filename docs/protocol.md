@@ -704,7 +704,7 @@ type SideBySide = {
 | 传输封套、方法分发、参数校验、设置、`remoteSet`、归类校验、提交信息草稿 | `test/host-plugin.test.mjs` |
 | Git 状态 / diff / 写操作 / 提交 / 推送 / 远程配置 / 指纹与 hunk / 提交信息输入 | `test/git-core.test.mjs` |
 | `diff.js` 的模型与对齐不变量 | `test/diff.test.mjs` |
-| bundle 格式、`apply` / `inject`、三个插槽条目 | `test/client-bundle.test.mjs` |
+| bundle 格式、`apply` / `inject`、五个插槽条目（输入框按钮、窗口层、样式表、收起控件与列表弹层） | `test/client-bundle.test.mjs` |
 | 客户端源码契约回归（窗口、状态栏、分支菜单 / 远程、全选、AI 签名、diff 保留等） | `test/client-source.test.mjs` |
 
 跨层改动（协议、Git 写路径、构建产物）在合并前应跑全量 `npm test` 与 `npm run validate -- --with-tests`。
