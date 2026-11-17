@@ -654,6 +654,10 @@ __def('app', function (exports, require, React) {
     var [commitMessage, setCommitMessage] = useState('');
     var [commitBusy, setCommitBusy] = useState(false);
     var [commitGenerating, setCommitGenerating] = useState(false);
+    /* Which entry started the in-flight draft / commit: 'drawer' or 'ai'. Both
+     * share one write chain and one draft request, so they all block; only the
+     * entry the user clicked may report progress. */
+    var [commitSource, setCommitSource] = useState(null);
     var [commitError, setCommitError] = useState(null);
     var [commitStale, setCommitStale] = useState(false);
     var [pushState, setPushState] = useState({ open: false, preview: null, loading: false, error: null, busy: false, remote: '', target: '' });
@@ -1440,9 +1444,19 @@ __def('app', function (exports, require, React) {
       return entries.filter(function (entry) { return entry.status === 'staged'; });
     }, [entries]);
 
+    /* One commit pipeline: a drawer commit / draft or the toolbar AI action in
+     * flight blocks every entry. Only the entry that started it reports progress
+     * — a button the user never pressed must not look like it is working, so the
+     * spinner follows `commitSource` while the other entries just disable with
+     * the reason below (the status strip shows the progress either way). */
+    var commitInFlight = commitBusy || commitGenerating;
+    var aiCommitBusy = commitInFlight && commitSource === 'ai';
+
     /* Guards shared by the drawer commit split and the toolbar AI action: the
-     * commit set must be previewable and the index must hold something. */
+     * commit set must be previewable, the index must hold something and no
+     * sibling entry may already be running the chain. */
     var commitBaseReasons = [];
+    if (commitInFlight) commitBaseReasons.push(commitBusy ? t('commit.running') : t('commit.generating'));
     if (truncated) commitBaseReasons.push(t('reason.truncated'));
     if (conflictCount > 0) commitBaseReasons.push(t('commit.conflictBlocked'));
     if (stagedEntries.length === 0) commitBaseReasons.push(t('commit.nothingChecked'));
@@ -1463,12 +1477,7 @@ __def('app', function (exports, require, React) {
     var aiCommitReasons = commitBaseReasons.slice();
     if (pushDisabledReason) aiCommitReasons.push(pushDisabledReason);
     var canAiCommitPush = aiCommitReasons.length === 0;
-    var aiCommitBusy = commitBusy || commitGenerating;
-    var aiCommitDisabledReason = commitBusy
-      ? t('commit.running')
-      : commitGenerating
-        ? t('commit.generating')
-        : (aiCommitReasons[0] || null);
+    var aiCommitDisabledReason = aiCommitReasons[0] || null;
     /* The AI draft action in the drawer only needs staged content: the message
      * field may be empty (that is the point) and the user can still edit the
      * draft. Its tooltip is the action name only — no reason breakdown. */
@@ -1549,6 +1558,7 @@ __def('app', function (exports, require, React) {
 
     var generateCommitMessage = useCallback(function () {
       if (commitBusyRef.current || commitGenerateRef.current.id !== null) return;
+      setCommitSource('drawer');
       requestCommitMessage().then(function (message) {
         setCommitMessage(message);
         setCommitStale(false);
@@ -1630,6 +1640,7 @@ __def('app', function (exports, require, React) {
         return;
       }
       var generation = targetGenerationRef.current;
+      setCommitSource(mode === 'aiCommitPush' ? 'ai' : 'drawer');
       setCommitBusy(true);
       setCommitError(null);
       setOperationError(null);
@@ -2537,12 +2548,15 @@ __def('app', function (exports, require, React) {
           if (commitError) setCommitError(null);
         },
         count: stagedEntries.length,
-        busy: commitBusy || commitGenerating,
+        busy: commitInFlight,
         canGenerate: canGenerate,
-        generateBusy: commitGenerating,
+        /* Drawer-scoped progress plus `blocked` for a toolbar AI run: the drawer
+         * reports progress only for what it started itself. */
+        generateBusy: commitGenerating && commitSource !== 'ai',
         commitMode: commitMode,
-        commitBusy: commitBusy,
-        commitGenerating: commitGenerating,
+        commitBusy: commitBusy && commitSource !== 'ai',
+        commitGenerating: commitGenerating && commitSource !== 'ai',
+        blocked: commitInFlight && commitSource === 'ai',
         commitCanRun: canCommit,
         commitReasons: commitReasons,
         error: commitError,

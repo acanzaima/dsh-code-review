@@ -6583,9 +6583,9 @@ __def('components', function (exports, require, React) {
    * panels instead of claiming a row of its own.
    *
    * Contract props: status, repo, busy, operation, onRefresh, onOpenPush,
-   * pushDisabledReason, aiCommitBusy, aiCommitCanRun, aiCommitDisabledReason,
-   * onAiCommitPush, aiMode, aiGrouping ('role'|'logic'), aiBusy, aiNotice,
-   * onChangeGrouping(value), onReclassify, onCopy(value), onSetRemote, t.
+   * pushDisabledReason, aiCommitBusy (that action's own run), aiCommitCanRun,
+   * aiCommitDisabledReason, onAiCommitPush, aiMode, aiGrouping ('role'|'logic'),
+   * aiBusy, aiNotice, onChangeGrouping(value), onReclassify, onCopy(value), onSetRemote, t.
    * Bulk staging (stage-all / unstage-all) lives in the FileNav header as the
    * tri-state select-all, where it shares the row/group checkbox model.
    */
@@ -6732,7 +6732,9 @@ __def('components', function (exports, require, React) {
      * so it lives next to (but separate from) the push-dialog button. The two
      * actions are deliberately not merged: one opens the remote/target dialog,
      * the other commits and pushes immediately, and hiding either behind a
-     * secondary menu would defeat its purpose. */
+     * secondary menu would defeat its purpose. `aiCommitBusy` is this action's
+     * own run; while a drawer commit holds the shared pipeline the button is
+     * only disabled (via `aiCommitCanRun`) and keeps its icon. */
     var aiCommitBusy = !!props.aiCommitBusy;
     var aiCommitDisabled = aiCommitBusy || busy || props.aiCommitCanRun === false;
     var aiCommitReason = busy ? t('reason.busy') : (props.aiCommitDisabledReason || null);
@@ -7616,16 +7618,20 @@ __def('components', function (exports, require, React) {
    * not a drawer mode. The menu opens upward because the drawer sits at the
    * bottom of the review window.
    *
-   * Contract props: t, mode ('commit'|'commitPush'), busy, generating, canRun,
-   * reasons [string], onCommit, onChangeMode.
+   * Contract props: t, mode ('commit'|'commitPush'), busy, blocked, generating,
+   * canRun, reasons [string], onCommit, onChangeMode. `busy` is this control's
+   * own write in flight (the only state that spins); `blocked` is a sibling entry
+   * (toolbar AI action) running the same pipeline and `generating` an AI draft —
+   * both disable the control instead of claiming it is working.
    */
   function CommitAction(props) {
     var t = makeT(props.t);
     var mode = props.mode === 'commitPush' ? props.mode : 'commit';
     var busy = !!props.busy;
+    var blocked = !!props.blocked;
     var generating = !!props.generating;
     var reasons = Array.isArray(props.reasons) ? props.reasons : [];
-    var running = busy || generating;
+    var locked = busy || blocked || generating;
     var menuState = React.useState(false);
     var menuOpen = menuState[0];
     var setMenuOpen = menuState[1];
@@ -7638,8 +7644,8 @@ __def('components', function (exports, require, React) {
     for (var index = 0; index < modes.length; index += 1) {
       if (modes[index].id === mode) active = modes[index];
     }
-    var disabled = running || props.canRun === false;
-    var disabledReason = busy
+    var disabled = locked || props.canRun === false;
+    var disabledReason = busy || blocked
       ? t('commit.running')
       : (generating ? t('commit.generating') : (reasons[0] || null));
     var title = disabled ? disabledTitle(t, disabledReason) : active.hint;
@@ -7660,7 +7666,7 @@ __def('components', function (exports, require, React) {
           className: 'gr-commit-main',
           title: title,
           'aria-label': active.label,
-          'aria-busy': running ? 'true' : undefined,
+          'aria-busy': busy ? 'true' : undefined,
           disabled: disabled ? true : undefined,
           onClick: function () {
             if (disabled) return;
@@ -7668,7 +7674,7 @@ __def('components', function (exports, require, React) {
             if (typeof props.onCommit === 'function') props.onCommit();
           },
         },
-          running ? h(Spinner, { size: 11 }) : active.icon,
+          busy ? h(Spinner, { size: 11 }) : active.icon,
           h('span', { className: 'gr-commit-mode-label' }, active.label)),
         h('button', {
           type: 'button',
@@ -7677,7 +7683,7 @@ __def('components', function (exports, require, React) {
           'aria-label': t('commit.mode'),
           'aria-haspopup': 'menu',
           'aria-expanded': menuOpen ? 'true' : 'false',
-          disabled: running ? true : undefined,
+          disabled: locked ? true : undefined,
           onClick: toggleMenu,
         }, h(IconChevronDown, { size: ICON_SIZE.md }))),
       menuOpen
@@ -7715,9 +7721,11 @@ __def('components', function (exports, require, React) {
    * keyboard shortcut: the message is committed from the split action only.
    *
    * Contract props: open, onToggle, message, onMessageChange, count, busy,
-   * canGenerate, generateBusy, commitMode, commitBusy, commitGenerating,
+   * canGenerate, generateBusy, commitMode, commitBusy, commitGenerating, blocked,
    * commitCanRun, commitReasons [string], error, conflictCount, staleNotice,
-   * onGenerate, onCommit, onChangeCommitMode, t.
+   * onGenerate, onCommit, onChangeCommitMode, t. `busy` locks the whole drawer;
+   * the commit/generate progress props are the drawer's own operation only, and
+   * `blocked` marks a toolbar AI run that holds the shared pipeline.
    */
   function CommitPanel(props) {
     var t = makeT(props.t);
@@ -7783,6 +7791,7 @@ __def('components', function (exports, require, React) {
             t: t,
             mode: props.commitMode,
             busy: !!props.commitBusy,
+            blocked: !!props.blocked,
             generating: !!props.commitGenerating,
             canRun: props.commitCanRun,
             reasons: props.commitReasons,
@@ -9604,6 +9613,10 @@ __def('app', function (exports, require, React) {
     var [commitMessage, setCommitMessage] = useState('');
     var [commitBusy, setCommitBusy] = useState(false);
     var [commitGenerating, setCommitGenerating] = useState(false);
+    /* Which entry started the in-flight draft / commit: 'drawer' or 'ai'. Both
+     * share one write chain and one draft request, so they all block; only the
+     * entry the user clicked may report progress. */
+    var [commitSource, setCommitSource] = useState(null);
     var [commitError, setCommitError] = useState(null);
     var [commitStale, setCommitStale] = useState(false);
     var [pushState, setPushState] = useState({ open: false, preview: null, loading: false, error: null, busy: false, remote: '', target: '' });
@@ -10390,9 +10403,19 @@ __def('app', function (exports, require, React) {
       return entries.filter(function (entry) { return entry.status === 'staged'; });
     }, [entries]);
 
+    /* One commit pipeline: a drawer commit / draft or the toolbar AI action in
+     * flight blocks every entry. Only the entry that started it reports progress
+     * — a button the user never pressed must not look like it is working, so the
+     * spinner follows `commitSource` while the other entries just disable with
+     * the reason below (the status strip shows the progress either way). */
+    var commitInFlight = commitBusy || commitGenerating;
+    var aiCommitBusy = commitInFlight && commitSource === 'ai';
+
     /* Guards shared by the drawer commit split and the toolbar AI action: the
-     * commit set must be previewable and the index must hold something. */
+     * commit set must be previewable, the index must hold something and no
+     * sibling entry may already be running the chain. */
     var commitBaseReasons = [];
+    if (commitInFlight) commitBaseReasons.push(commitBusy ? t('commit.running') : t('commit.generating'));
     if (truncated) commitBaseReasons.push(t('reason.truncated'));
     if (conflictCount > 0) commitBaseReasons.push(t('commit.conflictBlocked'));
     if (stagedEntries.length === 0) commitBaseReasons.push(t('commit.nothingChecked'));
@@ -10413,12 +10436,7 @@ __def('app', function (exports, require, React) {
     var aiCommitReasons = commitBaseReasons.slice();
     if (pushDisabledReason) aiCommitReasons.push(pushDisabledReason);
     var canAiCommitPush = aiCommitReasons.length === 0;
-    var aiCommitBusy = commitBusy || commitGenerating;
-    var aiCommitDisabledReason = commitBusy
-      ? t('commit.running')
-      : commitGenerating
-        ? t('commit.generating')
-        : (aiCommitReasons[0] || null);
+    var aiCommitDisabledReason = aiCommitReasons[0] || null;
     /* The AI draft action in the drawer only needs staged content: the message
      * field may be empty (that is the point) and the user can still edit the
      * draft. Its tooltip is the action name only — no reason breakdown. */
@@ -10499,6 +10517,7 @@ __def('app', function (exports, require, React) {
 
     var generateCommitMessage = useCallback(function () {
       if (commitBusyRef.current || commitGenerateRef.current.id !== null) return;
+      setCommitSource('drawer');
       requestCommitMessage().then(function (message) {
         setCommitMessage(message);
         setCommitStale(false);
@@ -10580,6 +10599,7 @@ __def('app', function (exports, require, React) {
         return;
       }
       var generation = targetGenerationRef.current;
+      setCommitSource(mode === 'aiCommitPush' ? 'ai' : 'drawer');
       setCommitBusy(true);
       setCommitError(null);
       setOperationError(null);
@@ -11487,12 +11507,15 @@ __def('app', function (exports, require, React) {
           if (commitError) setCommitError(null);
         },
         count: stagedEntries.length,
-        busy: commitBusy || commitGenerating,
+        busy: commitInFlight,
         canGenerate: canGenerate,
-        generateBusy: commitGenerating,
+        /* Drawer-scoped progress plus `blocked` for a toolbar AI run: the drawer
+         * reports progress only for what it started itself. */
+        generateBusy: commitGenerating && commitSource !== 'ai',
         commitMode: commitMode,
-        commitBusy: commitBusy,
-        commitGenerating: commitGenerating,
+        commitBusy: commitBusy && commitSource !== 'ai',
+        commitGenerating: commitGenerating && commitSource !== 'ai',
+        blocked: commitInFlight && commitSource === 'ai',
         commitCanRun: canCommit,
         commitReasons: commitReasons,
         error: commitError,

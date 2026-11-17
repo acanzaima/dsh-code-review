@@ -3817,8 +3817,8 @@ test('the commit split action lives in the drawer and runs the remembered mode',
   }
   const appDrawerStart = appSource.indexOf('h(components.CommitPanel, {');
   const appDrawerSource = appSource.slice(appDrawerStart, appSource.indexOf('h(components.StatusBar, {', appDrawerStart));
-  for (const token of ['commitMode: commitMode,', 'commitBusy: commitBusy,',
-    'commitGenerating: commitGenerating,', 'commitCanRun: canCommit,',
+  for (const token of ['commitMode: commitMode,', "commitBusy: commitBusy && commitSource !== 'ai',",
+    "commitGenerating: commitGenerating && commitSource !== 'ai',", 'commitCanRun: canCommit,',
     'commitReasons: commitReasons,', 'onCommit: runCommit,', 'onChangeCommitMode:']) {
     assert.ok(appDrawerSource.includes(token), `app.js must pass ${token} to CommitPanel`);
   }
@@ -3827,7 +3827,7 @@ test('the commit split action lives in the drawer and runs the remembered mode',
   const panelEnd = componentsSource.indexOf('function PushDialog(', panelStart);
   const panelSource = componentsSource.slice(panelStart, panelEnd);
   for (const token of ['h(CommitAction, {', 'mode: props.commitMode',
-    'busy: !!props.commitBusy', 'onCommit: props.onCommit',
+    'busy: !!props.commitBusy', 'blocked: !!props.blocked', 'onCommit: props.onCommit',
     'onChangeMode: props.onChangeCommitMode']) {
     assert.ok(panelSource.includes(token), `CommitPanel must wire ${token}`);
   }
@@ -3874,6 +3874,84 @@ test('the commit split action lives in the drawer and runs the remembered mode',
   // The AI draft request is shared by the drawer button and the combined mode.
   assert.match(appSource, /var requestCommitMessage = useCallback\(/);
   assert.match(appSource, /var messagePromise = mode === 'aiCommitPush' \? requestCommitMessage\(\)/);
+});
+
+test('only the commit entry the user clicked reports progress', () => {
+  const runtime = createClientRuntime();
+  const components = runtime.require('components');
+  const ui = runtime.require('ui');
+  const t = runtime.require('i18n').createI18n('zh').t;
+
+  // The drawer split and the toolbar AI action run one shared pipeline, so they
+  // all block while it runs. The spinner must follow the entry that started it:
+  // a button the user never pressed must not look like it is working (reported
+  // as "clicking 提交 spins AI·提交并推送 too").
+  assert.match(appSource, /var commitInFlight = commitBusy \|\| commitGenerating;/);
+  assert.match(appSource, /var aiCommitBusy = commitInFlight && commitSource === 'ai';/);
+  assert.match(appSource, /setCommitSource\(mode === 'aiCommitPush' \? 'ai' : 'drawer'\);/);
+  assert.match(appSource, /setCommitSource\('drawer'\);/);
+  // The in-flight state is a blocking reason for every entry ...
+  assert.match(appSource,
+    /if \(commitInFlight\) commitBaseReasons\.push\(commitBusy \? t\('commit\.running'\) : t\('commit\.generating'\)\);/);
+  assert.match(appSource, /var aiCommitDisabledReason = aiCommitReasons\[0\] \|\| null;/);
+  // ... and the drawer's own progress props exclude a toolbar AI run, which it
+  // receives as `blocked` instead.
+  const drawerStart = appSource.indexOf('h(components.CommitPanel, {');
+  const drawerBlock = appSource.slice(drawerStart, appSource.indexOf('h(components.StatusBar, {', drawerStart));
+  assert.match(drawerBlock, /generateBusy: commitGenerating && commitSource !== 'ai',/);
+  assert.match(drawerBlock, /commitBusy: commitBusy && commitSource !== 'ai',/);
+  assert.match(drawerBlock, /commitGenerating: commitGenerating && commitSource !== 'ai',/);
+  assert.match(drawerBlock, /blocked: commitInFlight && commitSource === 'ai',/);
+
+  const base = {
+    t, mode: 'commit', busy: false, blocked: false, generating: false,
+    canRun: true, reasons: [], onCommit: function () {}, onChangeMode: function () {},
+  };
+  const mainOf = (extra) => collectElements(components.CommitAction(Object.assign({}, base, extra)))
+    .find((element) => elementClasses(element).includes('gr-commit-main'));
+  const runReason = t('actions.disabledReason', { reason: t('commit.running') });
+
+  // This control's own write: spinner + aria-busy on the drawer action.
+  const own = mainOf({ busy: true });
+  assert.equal(own.props['aria-busy'], 'true');
+  assert.equal(own.props.children[0].type.name, 'Spinner');
+  // A sibling entry's run, or a draft in flight: disabled with the reason, but
+  // the mode glyph stays — nothing claims to be loading.
+  const blocked = mainOf({ blocked: true });
+  assert.equal(blocked.props.disabled, true);
+  assert.equal(blocked.props['aria-busy'], undefined, 'a sibling run is not this control working');
+  assert.equal(blocked.props.children[0].type.name, 'IconCommit', 'the blocked action keeps its mode glyph');
+  assert.equal(blocked.props.title, runReason);
+  const drafting = mainOf({ generating: true });
+  assert.equal(drafting.props.disabled, true);
+  assert.equal(drafting.props['aria-busy'], undefined, 'only this control\'s own commit spins');
+  assert.equal(drafting.props.children[0].type.name, 'IconCommit');
+  assert.equal(drafting.props.title, t('actions.disabledReason', { reason: t('commit.generating') }));
+
+  // Toolbar contract: `aiCommitBusy` is that action's own run. A drawer commit
+  // holds it via `aiCommitCanRun`, which disables it without spinning.
+  const aiButtonOf = (extra) => collectElements(components.TopBar(Object.assign({
+    t,
+    status: { repo: null, summary: null },
+    repo: null,
+    onRefresh: function () {},
+    onOpenPush: function () {},
+    pushDisabledReason: '',
+    aiCommitBusy: false,
+    aiCommitCanRun: true,
+    aiCommitDisabledReason: null,
+    onAiCommitPush: function () {},
+  }, extra))).find((element) => elementClasses(element).includes('gr-topbar-ai-commit'));
+  const blockedAi = aiButtonOf({ aiCommitCanRun: false, aiCommitDisabledReason: t('commit.running') });
+  assert.equal(blockedAi.props.disabled, true);
+  assert.equal(blockedAi.props.busy, false, 'a drawer commit must not spin the toolbar AI action');
+  assert.equal(blockedAi.props.title, runReason);
+  assert.equal(ui.Button(blockedAi.props).props.children[0].type.name, 'IconSpark',
+    'the blocked toolbar action keeps its spark glyph');
+  const ownAi = aiButtonOf({ aiCommitBusy: true, aiCommitCanRun: false, aiCommitDisabledReason: t('commit.generating') });
+  assert.equal(ownAi.props.busy, true);
+  assert.equal(ownAi.props.disabled, true);
+  assert.equal(ui.Button(ownAi.props).props.children[0].type.name, 'Spinner');
 });
 
 test('AI commit message drafting is an explicit, cancellable read-only request', () => {

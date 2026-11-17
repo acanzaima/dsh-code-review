@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
   <img alt="Node.js 20.11 或更高版本" src="https://img.shields.io/badge/node-%3E%3D20.11-339933?style=flat-square">
-  <img alt="DSH 0.2.2-rc.1" src="https://img.shields.io/badge/DSH-0.2.2--rc.1-5b6ee1?style=flat-square">
+  <img alt="DSH 0.2.2-rc.3" src="https://img.shields.io/badge/DSH-0.2.2--rc.3-5b6ee1?style=flat-square">
   <img alt="Zero runtime dependencies" src="https://img.shields.io/badge/dependencies-0-brightgreen?style=flat-square">
 </p>
 
@@ -32,7 +32,7 @@
 
 ## 安装
 
-插件发布在 npm（[`@acanzaima/dsh-code-review`](https://www.npmjs.com/package/@acanzaima/dsh-code-review)），在 DSH 的「插件」页中安装。运行需要本机可用的 Git 和 Node.js ≥ 20.11（DSH 桌面端已内置满足要求的运行时）；已在 DSH 0.2.2-rc.1 上验证。
+插件发布在 npm（[`@acanzaima/dsh-code-review`](https://www.npmjs.com/package/@acanzaima/dsh-code-review)），在 DSH 的「插件」页中安装。运行需要本机可用的 Git 和 Node.js ≥ 20.11（DSH 桌面端已内置满足要求的运行时）；已在 DSH 0.2.2-rc.3 上验证。
 
 ### 通过 DSH 桌面端安装（推荐）
 

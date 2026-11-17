@@ -8,11 +8,11 @@ server of its own and no runtime dependencies.
 
 | Version | DSH version | Supported |
 | --- | --- | --- |
-| 0.1.x | 0.2.2-rc.1 | Yes |
+| 0.2.x | 0.2.2-rc.3 | Yes |
 | older | any | No |
 
-Only the latest 0.1.x release receives security fixes. The plugin is currently developed and
-validated against DSH `0.2.2-rc.1`; other DSH versions are untested. Fixes ship as patch releases and
+Only the latest 0.2.x release receives security fixes. The plugin is currently developed and
+validated against DSH `0.2.2-rc.3`; other DSH versions are untested. Fixes ship as patch releases and
 are documented in [CHANGELOG.md](CHANGELOG.md).
 
 ## Reporting a vulnerability
