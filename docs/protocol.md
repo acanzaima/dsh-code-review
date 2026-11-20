@@ -290,7 +290,7 @@ type StatusPayload = {
   state: 'ok' | 'no-git' | 'error';
   error?: { code: string; message: string };
   gitVersion?: string | null;
-  entries: Entry[];
+  entries: Entry[];              // 按 path 升序；同一路径的 staged 行在 unstaged 行之前
   summary: {
     files: number;                 // 去重后的路径数
     entries: number;               // 列表行数（同一文件可能同时有 staged 与 unstaged 行）
@@ -308,6 +308,8 @@ type StatusPayload = {
   stagedFingerprint: string;       // 完整暂存区的规范指纹，提交时回传；不受 2000 行展示上限影响
   generatedAt: number;             // 毫秒时间戳
 };
+
+`entries` 的顺序是协议契约：Host 按 `path` 排序（同一路径的 `staged` 行在 `unstaged` 行之前），客户端必须按数组顺序渲染，不得按状态或时间重排。这样勾选 / 取消勾选只改变条目的 `key`、`status` 与指纹，不会让文件在列表中移动；被展示上限截断时，入选的仍是 git 自身顺序的前 2000 行（已跟踪变更在前、未跟踪路径在后），然后按上述规则排序展示。
 
 type RepoInitResult = {
   repo: RepoRef;

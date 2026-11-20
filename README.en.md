@@ -59,7 +59,7 @@ Upgrades, disabling and uninstalling also happen on the Plugins page; to upgrade
 3. Check a file or group to stage it. Uncheck it to unstage while keeping the file contents. The select-all checkbox applies to the current filter results.
 4. Check the files to commit: write the message in the commit area at the bottom (or let the sparkles button draft one with AI) and click the split commit control's main half to run the remembered mode — **Commit** commits only; **Commit and push** pushes straight to the current branch's remote branch without a dialog. Use the chevron to switch modes; the choice is remembered across windows. For the shortcut path, skip the drawer entirely and click **AI commit & push** in the top toolbar: AI drafts the message, commits and pushes in one step. Use the toolbar “Push” action when you need to choose a remote or target branch manually.
 
-The file navigation groups by whether a path already exists in the repository (tracked / new / conflicts); staging or unstaging changes the commit state but never moves a file between groups.
+The file navigation groups by whether a path already exists in the repository (tracked / new / conflicts); staging or unstaging changes the commit state but never moves a file between groups or shifts its position in the list.
 
 If the workspace is not a Git repository yet, the window offers **Initialise and refresh**; it creates only `.git/` and never generates or modifies project files. In that state the window title and the minimized control show the workspace directory name instead of a generic “Code Review”, so several workspace windows stay distinguishable.
 
@@ -78,7 +78,7 @@ Each window has its own review UI state; plugin settings and the Git state of th
 
 ### AI grouping
 
-By default, files are grouped by whether they already exist in the repository (tracked / new / conflicts), so staging or unstaging never re-groups the list. The toolbar also offers:
+By default, files are grouped by whether they already exist in the repository (tracked / new / conflicts), so staging or unstaging never re-groups the list or moves a file within its group. The toolbar also offers:
 
 - **By role**: group shared components, business features, config, tests, docs and similar roles.
 - **By feature logic**: collect changes for the same feature together, with config, build or docs-only changes under “Non-functional changes”.

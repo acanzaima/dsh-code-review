@@ -688,6 +688,24 @@ export function createGit(exec) {
     return rows;
   }
 
+  // Side order for two rows of the same path: staged (HEAD → index) first,
+  // then unstaged (index → worktree).
+  const ROW_SIDE_ORDER = { staged: 0, unstaged: 1, untracked: 2, conflict: 3 };
+
+  /**
+   * Display order for status rows: path first, then the side of the same path.
+   *
+   * `git status` lists tracked rows before untracked ones, so a new file changed
+   * blocks the moment its checkbox staged it: checking an untracked file moved
+   * its row up into the tracked block, unchecking moved it back down. Ordering
+   * by path keeps every row in place while the user only toggles its staging
+   * state; a path that has changes on both sides keeps its two rows adjacent.
+   */
+  function compareStatusRows(left, right) {
+    if (left.path !== right.path) return left.path < right.path ? -1 : 1;
+    return (ROW_SIDE_ORDER[left.status] ?? 9) - (ROW_SIDE_ORDER[right.status] ?? 9);
+  }
+
   function detectKind(row, opts) {
     if (row.status === 'conflict') return 'conflict';
     const record = row.record;
@@ -734,7 +752,10 @@ export function createGit(exec) {
 
     const allRows = buildStatusRows(parsed.records);
     const truncated = allRows.length > maxEntries;
-    const rows = truncated ? allRows.slice(0, maxEntries) : allRows;
+    // Which rows fit under the cap still follows git's own order (tracked
+    // changes, then untracked paths), so the capped prefix matches plain
+    // `git status`; only the displayed order is canonicalised to path order.
+    const rows = (truncated ? allRows.slice(0, maxEntries) : allRows).sort(compareStatusRows);
 
     const hasStaged = rows.some((row) => row.status === 'staged');
     const hasUnstaged = rows.some((row) => row.status === 'unstaged');

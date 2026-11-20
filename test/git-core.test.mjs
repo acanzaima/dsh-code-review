@@ -376,6 +376,66 @@ test('staged vs unstaged separation with line counts split by scope', async (t) 
   assert.notEqual(entryOf(changed, 'unstaged:f.txt').fingerprint.target, oldFp.target);
 });
 
+test('status rows keep a stable path order while staging / unstaging', async (t) => {
+  const { f, git, repo } = await committedFixture(t, 'stable-order', { 'mod.txt': 'one\n' });
+  f.write('mod.txt', 'one changed\n');
+  f.write('src/alpha.txt', 'alpha\n');
+  f.write('src/gamma.txt', 'gamma\n');
+  f.write('zebra.txt', 'zebra\n');
+
+  const order = (status) => status.entries.map((entry) => `${entry.status}:${entry.path}`);
+  let status = await freshStatus(git, repo);
+  assert.deepEqual(order(status), [
+    'unstaged:mod.txt',
+    'untracked:src/alpha.txt',
+    'untracked:src/gamma.txt',
+    'untracked:zebra.txt',
+  ], 'rows are ordered by path, not by the block git status prints them in');
+
+  // Checking a new file rewrites its key and moves it out of git's untracked
+  // block; the row itself must keep its position.
+  await git.stage(repo, { keys: ['untracked:zebra.txt'], expected: expectedFor(status, ['untracked:zebra.txt']), status });
+  status = await freshStatus(git, repo);
+  assert.deepEqual(order(status), [
+    'unstaged:mod.txt',
+    'untracked:src/alpha.txt',
+    'untracked:src/gamma.txt',
+    'staged:zebra.txt',
+  ]);
+
+  await git.stage(repo, { keys: ['untracked:src/alpha.txt'], expected: expectedFor(status, ['untracked:src/alpha.txt']), status });
+  status = await freshStatus(git, repo);
+  assert.deepEqual(order(status), [
+    'unstaged:mod.txt',
+    'staged:src/alpha.txt',
+    'untracked:src/gamma.txt',
+    'staged:zebra.txt',
+  ]);
+
+  // Unchecking is the reverse move and must not reorder either.
+  await git.unstage(repo, { keys: ['staged:zebra.txt'], expected: expectedFor(status, ['staged:zebra.txt']), status });
+  status = await freshStatus(git, repo);
+  assert.deepEqual(order(status), [
+    'unstaged:mod.txt',
+    'staged:src/alpha.txt',
+    'untracked:src/gamma.txt',
+    'untracked:zebra.txt',
+  ]);
+
+  // Both sides of one path stay adjacent in that path's slot, index side first.
+  f.write('mod.txt', 'one changed again\n');
+  f.git(['add', '--', 'mod.txt']);
+  f.write('mod.txt', 'one changed a third time\n');
+  status = await freshStatus(git, repo);
+  assert.deepEqual(order(status), [
+    'staged:mod.txt',
+    'unstaged:mod.txt',
+    'staged:src/alpha.txt',
+    'untracked:src/gamma.txt',
+    'untracked:zebra.txt',
+  ]);
+});
+
 // ---------------------------------------------------------------------------
 // whole-file stage / unstage / discard
 // ---------------------------------------------------------------------------
